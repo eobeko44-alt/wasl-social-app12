@@ -1,7 +1,6 @@
 import { Users } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import UserCard from '@/components/UserCard';
-import PostComposer from './PostComposer';
 import PostCard from './PostCard';
 
 export default function FeedTab() {
@@ -9,7 +8,6 @@ export default function FeedTab() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-5">
-      <PostComposer />
       <div className="space-y-4">
         {posts.map((post) => (
           <PostCard key={post.id} post={post} />
@@ -25,7 +23,9 @@ export default function FeedTab() {
           </span>
         </div>
         {discoverPeople.length === 0 ? (
-          <p className="py-4 text-center text-sm text-slate-500">أضفت الجميع! لا توجد توصيات جديدة حالياً.</p>
+          <p className="py-4 text-center text-sm text-slate-500">
+            أضفت الجميع! لا توجد توصيات جديدة حالياً.
+          </p>
         ) : (
           <div className="grid gap-2.5 sm:grid-cols-2">
             {discoverPeople.map((user) => (
