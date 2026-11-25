@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AtSign, Check, Globe, Lock, LogOut, Pencil, Phone, ShieldCheck, Sparkles } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/store/useAppStore';
@@ -8,6 +8,33 @@ export default function ProfileTab() {
   const [editingBio, setEditingBio] = useState(false);
   const [bioDraft, setBioDraft] = useState(profile.bio ?? '');
   const [loggingOut, setLoggingOut] = useState(false);
+  const [metaName, setMetaName] = useState('');
+  const [metaPhone, setMetaPhone] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    supabase.auth.getUser().then(({ data }) => {
+      if (!active) return;
+      const m = data.user?.user_metadata;
+      if (m?.full_name) setMetaName(String(m.full_name).trim());
+      if (m?.phone_number) setMetaPhone(String(m.phone_number).trim());
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
+      const m = session?.user?.user_metadata;
+      if (m?.full_name) setMetaName(String(m.full_name).trim());
+      if (m?.phone_number) setMetaPhone(String(m.phone_number).trim());
+    });
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  const currentName = (metaName || profile.name || 'أنت').trim();
+  const currentPhone = (metaPhone || profile.phone || '').trim();
+  const latinHandle = currentName.toLowerCase().replace(/[^a-z0-9_]/g, '');
+  const currentUsername = latinHandle ? `@${latinHandle}` : profile.username;
 
   const saveBio = () => {
     updateProfile({ bio: bioDraft.trim() });
@@ -31,8 +58,8 @@ export default function ProfileTab() {
             className="h-24 w-24 rounded-full border-4 border-slate-900 bg-slate-800 object-cover shadow-xl"
           />
           <div className="text-center">
-            <h2 className="text-xl font-bold text-white">{profile.name}</h2>
-            <p className="text-sm text-cyan-400" dir="ltr">{profile.username}</p>
+            <h2 className="text-xl font-bold text-white">{currentName}</h2>
+            <p className="text-sm text-cyan-400" dir="ltr">{currentUsername}</p>
           </div>
           <p className="max-w-md text-center text-sm leading-relaxed text-slate-300">{profile.bio}</p>
 
@@ -43,15 +70,16 @@ export default function ProfileTab() {
           </div>
 
           <div className="mt-3 grid w-full gap-2 text-sm">
-            <InfoRow icon={<Phone size={16} className="text-purple-400" />} label="رقم الهاتف" value={profile.phone} ltr />
-            <InfoRow icon={<AtSign size={16} className="text-cyan-400" />} label="اسم المستخدم" value={profile.username} ltr />
+            <InfoRow icon={<Phone size={16} className="text-purple-400"
+ size={16} />} label="رقم الهاتف" value={currentPhone} ltr />
+            <InfoRow icon={<AtSign className="text-cyan-400" size={16} />} label="اسم المستخدم" value={currentUsername} ltr />
           </div>
         </div>
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
         <div className="mb-4 flex items-center gap-2">
-          <ShieldCheck size={18} className="text-emerald-400" />
+          <ShieldCheck className="text-emerald-400" size={18} />
           <h3 className="text-base font-bold text-white">الخصوصية</h3>
         </div>
 
@@ -92,7 +120,7 @@ export default function ProfileTab() {
       <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Sparkles size={17} className="text-purple-400" />
+            <Sparkles className="text-purple-400" size={17} />
             <h3 className="text-base font-bold text-white">نبذة عني</h3>
           </div>
           {!editingBio && (
@@ -129,7 +157,8 @@ export default function ProfileTab() {
                 </button>
                 <button
                   onClick={saveBio}
-                  className="flex items-center gap-1.5 rounded-full bg-gradient-to-l from-cyan-600 to-purple-600 px-4 py-1.5 text-xs font-bold text-white transition hover:brightness-110 active:scale-95"
+                  className="flex items-center gap-1.5 rounded-full bg-gradient-to-l from-cyan-600 to-purple
+-600 px-4 py-1.5 text-xs font-bold text-white transition hover:brightness-110 active:scale-95"
                 >
                   <Check size={14} />
                   حفظ
