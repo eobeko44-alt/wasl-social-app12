@@ -18,6 +18,23 @@ const TABS: { id: Tab; label: string; icon: typeof Globe }[] = [
   { id: 'profile', label: 'حسابي', icon: User },
 ];
 
+function applySessionToProfile(s: Session | null) {
+  const meta = s?.user?.user_metadata;
+  if (!meta) return;
+  const fullName = typeof meta.full_name === 'string' ? meta.full_name.trim() : '';
+  const phoneNum = typeof meta.phone_number === 'string' ? meta.phone_number.trim() : '';
+  const patch: { name?: string; phone?: string; username?: string } = {};
+  if (fullName) {
+    patch.name = fullName;
+    const cleanHandle = fullName.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    if (cleanHandle) patch.username = `@${cleanHandle}`;
+  }
+  if (phoneNum) patch.phone = phoneNum;
+  if (Object.keys(patch).length > 0) {
+    useAppStore.getState().updateProfile(patch);
+  }
+}
+
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
@@ -27,10 +44,12 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
+      applySessionToProfile(data.session);
       setChecking(false);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s);
+      applySessionToProfile(s);
       setChecking(false);
     });
     return () => sub.subscription.unsubscribe();
