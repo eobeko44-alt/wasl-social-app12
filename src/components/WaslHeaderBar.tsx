@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 
 export type WaslTabKey = 'feed' | 'chats' | 'contacts' | 'profile';
 
@@ -62,7 +62,9 @@ export function WaslHeaderBar({
 
   const [storyModalOpen, setStoryModalOpen] = useState(false);
   const [storyText, setStoryText] = useState('');
-  const [storyImageUrl, setStoryImageUrl] = useState('');
+  const [storyImageData, setStoryImageData] = useState<string>('');
+  const [storyFileName, setStoryFileName] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const normalizedQuery = searchQuery.trim().toLowerCase().replace(/^@/, '');
   const filteredFriends = normalizedQuery
@@ -85,17 +87,59 @@ export function WaslHeaderBar({
     { key: 'profile', label: 'حسابي', icon: '👤' },
   ];
 
+  // فتح معرض التلفون مباشرة من أي مكان يطلب إضافة قصة
+  const openStoryGallery = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    } else {
+      setStoryModalOpen(true);
+    }
+  };
+
+  const handlePickGalleryImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setStoryFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setStoryImageData(reader.result);
+        setStoryModalOpen(true);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const resetStoryModal = () => {
+    setStoryText('');
+    setStoryImageData('');
+    setStoryFileName('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    setStoryModalOpen(false);
+  };
+
   const handleStorySave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!storyText.trim() && !storyImageUrl.trim()) return;
-    onCreateStorySubmit?.(storyText.trim(), storyImageUrl.trim() || undefined);
-    setStoryText('');
-    setStoryImageUrl('');
-    setStoryModalOpen(false);
+    if (!storyText.trim() && !storyImageData) return;
+    onCreateStorySubmit?.(storyText.trim(), storyImageData || undefined);
+    resetStoryModal();
   };
 
   return (
     <div dir="rtl" className="w-full bg-slate-950 text-slate-100 select-none">
+      {/* مدخل المعرض العام لأي زر قصة */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handlePickGalleryImage}
+        className="hidden"
+      />
+
       {/* 1. الهيدر العلوي: اسم التطبيق + (+ قصة) + (🔍 بحث أصدقاء) + (☰ قائمة جانبية) */}
       <div className="flex items-center justify-between px-4 pt-3 pb-2">
         <span className="text-2xl font-black tracking-tight bg-gradient-to-l from-cyan-400 to-purple-500 bg-clip-text text-transparent">
@@ -105,7 +149,7 @@ export function WaslHeaderBar({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setStoryModalOpen(true)}
+            onClick={openStoryGallery}
             title="إضافة قصة"
             aria-label="إضافة قصة"
             className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 border border-slate-800 text-lg font-bold text-slate-100 hover:border-cyan-500/40 transition"
@@ -289,7 +333,7 @@ export function WaslHeaderBar({
                   <button
                     key={story.id}
                     type="button"
-                    onClick={() => setStoryModalOpen(true)}
+                    onClick={openStoryGallery}
                     className="relative flex h-40 w-28 shrink-0 flex-col justify-between overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 text-center shadow"
                   >
                     <div className="flex-1 w-full bg-slate-800/60 flex items-center justify-center">
@@ -361,7 +405,7 @@ export function WaslHeaderBar({
         </>
       )}
 
-      {/* نافذة إضافة قصة سريعة */}
+      {/* نافذة إتمام ونشر القصة بعد اختيار الصورة من المعرض */}
       {storyModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
           <form
@@ -372,12 +416,29 @@ export function WaslHeaderBar({
               <h3 className="text-sm font-black text-white">إضافة قصة جديدة</h3>
               <button
                 type="button"
-                onClick={() => setStoryModalOpen(false)}
+                onClick={resetStoryModal}
                 className="text-xs text-slate-400 hover:text-white"
               >
                 ✕
               </button>
             </div>
+
+            {storyImageData && (
+              <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+                <img
+                  src={storyImageData}
+                  alt={storyFileName || 'صورة القصة'}
+                  className="h-44 w-full object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={openStoryGallery}
+                  className="absolute bottom-2 right-2 rounded-lg bg-slate-950/85 px-2.5 py-1 text-[10px] font-bold text-cyan-300 hover:text-cyan-200"
+                >
+                  تغيير الصورة
+                </button>
+              </div>
+            )}
 
             <textarea
               rows={3}
@@ -387,19 +448,10 @@ export function WaslHeaderBar({
               className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
             />
 
-            <input
-              type="url"
-              dir="ltr"
-              value={storyImageUrl}
-              onChange={(e) => setStoryImageUrl(e.target.value)}
-              placeholder="https://... رابط صورة للقصة (اختياري)"
-              className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-purple-500/40 focus:outline-none"
-            />
-
             <div className="flex gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setStoryModalOpen(false)}
+                onClick={resetStoryModal}
                 className="flex-1 rounded-xl border border-slate-800 bg-slate-950 py-2 text-xs font-bold text-slate-300"
               >
                 إلغاء
@@ -441,7 +493,7 @@ export function WaslHeaderBar({
                   type="button"
                   onClick={() => {
                     setDrawerOpen(false);
-                    setStoryModalOpen(true);
+                    openStoryGallery();
                   }}
                   className="w-full flex items-center justify-between rounded-xl bg-slate-950/80 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-100 hover:border-cyan-500/40 transition"
                 >
