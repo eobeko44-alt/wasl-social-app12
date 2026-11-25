@@ -22,7 +22,9 @@ function readCachedPassword(): string | undefined {
   try {
     const win = window as unknown as { __waslLastPassword?: string };
     if (win.__waslLastPassword) return win.__waslLastPassword;
-    const raw = window.sessionStorage?.getItem(LAST_PASSWORD_KEY);
+    const raw =
+      window.sessionStorage?.getItem(LAST_PASSWORD_KEY) ||
+      window.localStorage?.getItem(LAST_PASSWORD_KEY);
     return raw || undefined;
   } catch {
     return undefined;
@@ -34,6 +36,7 @@ function clearCachedPassword() {
     const win = window as unknown as { __waslLastPassword?: string };
     delete win.__waslLastPassword;
     window.sessionStorage?.removeItem(LAST_PASSWORD_KEY);
+    window.localStorage?.removeItem(LAST_PASSWORD_KEY);
   } catch {
     // ignore
   }
