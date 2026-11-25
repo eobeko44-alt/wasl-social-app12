@@ -8,14 +8,11 @@ import {
   Gamepad2,
   AtSign,
   Phone,
-  Globe,
-  Lock,
   Plus,
   Edit3,
   Users,
   Image as ImageIcon,
   Sparkles,
-  LogOut,
   Heart,
   MessageCircle,
   Share2,
@@ -23,7 +20,6 @@ import {
   Send,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
-import { supabase } from '@/lib/supabase';
 
 type ProfileSectionTab = 'all' | 'photos' | 'about';
 
@@ -109,7 +105,7 @@ export default function ProfileTab() {
   const [avatarImage, setAvatarImage] = useState<string>(
     saved.avatarImage || profile.avatar || ''
   );
-  const [isPublicAccount, setIsPublicAccount] = useState<boolean>(
+  const [isPublicAccount] = useState<boolean>(
     typeof saved.isPublicAccount === 'boolean'
       ? saved.isPublicAccount
       : typeof profile.isPublic === 'boolean'
@@ -205,7 +201,6 @@ export default function ProfileTab() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const highlightInputRef = useRef<HTMLInputElement | null>(null);
 
-  // حفظ دائم لأي تعديل أو صورة أو منشور
   useEffect(() => {
     savePersistedProfile({
       coverImage,
@@ -342,14 +337,6 @@ export default function ProfileTab() {
     setEditingDetails(false);
   };
 
-  const handleTogglePrivacy = () => {
-    const nextValue = !isPublicAccount;
-    setIsPublicAccount(nextValue);
-    if (typeof store.updateProfile === 'function') {
-      store.updateProfile({ isPublic: nextValue });
-    }
-  };
-
   const handleToggleLike = (postId: string) => {
     setActivityPosts((prev) =>
       prev.map((p) => {
@@ -417,7 +404,6 @@ export default function ProfileTab() {
     }
   };
 
-  // حذف يتم فقط عندما يضغط المستخدم على زر الحذف بنفسه
   const handleDeletePost = (postId: string) => {
     setActivityPosts((prev) => prev.filter((p) => p.id !== postId));
   };
@@ -933,7 +919,6 @@ export default function ProfileTab() {
                     />
                   )}
 
-                  {/* عدّادات التفاعل */}
                   <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 text-[11px] text-slate-400">
                     <span>{post.likesCount || 0} أحببته</span>
                     <div className="flex items-center gap-3">
@@ -942,7 +927,6 @@ export default function ProfileTab() {
                     </div>
                   </div>
 
-                  {/* أزرار التفاعل: أحببته - تعليق - مشاركة */}
                   <div className="grid grid-cols-3 gap-1.5 border-t border-slate-800/80 pt-2">
                     <button
                       type="button"
@@ -981,7 +965,6 @@ export default function ProfileTab() {
                     </button>
                   </div>
 
-                  {/* قسم التعليقات */}
                   {isCommentsOpen && (
                     <div className="space-y-2.5 border-t border-slate-800/80 pt-3">
                       {comments.length > 0 && (
@@ -1033,48 +1016,6 @@ export default function ProfileTab() {
           )}
         </section>
       )}
-
-      {/* الخصوصية وتسجيل الخروج */}
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/75 p-4 space-y-3">
-        <h2 className="text-sm font-black text-white">الخصوصية</h2>
-
-        <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/70 px-3.5 py-2.5">
-          <button
-            type="button"
-            onClick={handleTogglePrivacy}
-            aria-label="تبديل خصوصية الحساب"
-            className={`relative h-6 w-11 rounded-full transition ${
-              isPublicAccount ? 'bg-cyan-500' : 'bg-slate-700'
-            }`}
-          >
-            <span
-              className={`block h-4 w-4 rounded-full bg-white transition-transform ${
-                isPublicAccount ? '-translate-x-6' : '-translate-x-1'
-              }`}
-            />
-          </button>
-
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
-            <span>{isPublicAccount ? 'حساب عام' : 'حساب خاص'}</span>
-            {isPublicAccount ? (
-              <Globe size={15} className="text-cyan-400" />
-            ) : (
-              <Lock size={15} className="text-purple-400" />
-            )}
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={async () => {
-            await supabase.auth.signOut();
-          }}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-950/30 py-2.5 text-xs font-bold text-rose-300 hover:bg-rose-950/50 transition"
-        >
-          <LogOut size={14} />
-          <span>تسجيل الخروج</span>
-        </button>
-      </section>
     </div>
   );
 }
