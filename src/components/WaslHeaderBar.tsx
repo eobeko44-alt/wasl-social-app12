@@ -28,8 +28,7 @@ interface WaslHeaderBarProps {
   friends?: FriendItem[];
   stories?: StoryItem[];
   onCreateStorySubmit?: (storyText: string, storyImage?: string) => void;
-  onQuickPhoto?: () => void;
-  onOpenComposer?: () => void;
+  onCreatePostSubmit?: (postText: string, postImage?: string) => void;
   onSelectStory?: (story: StoryItem) => void;
   onSelectFriend?: (friend: FriendItem) => void;
   onOpenSwitchAccount?: () => void;
@@ -49,8 +48,7 @@ export function WaslHeaderBar({
     { id: 'music', title: 'موسيقى', isMusic: true },
   ],
   onCreateStorySubmit,
-  onQuickPhoto,
-  onOpenComposer,
+  onCreatePostSubmit,
   onSelectStory,
   onSelectFriend,
   onOpenSwitchAccount,
@@ -60,11 +58,19 @@ export function WaslHeaderBar({
   const [searchQuery, setSearchQuery] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  // حالة القصص + معرض الصور للقصة
   const [storyModalOpen, setStoryModalOpen] = useState(false);
   const [storyText, setStoryText] = useState('');
   const [storyImageData, setStoryImageData] = useState<string>('');
   const [storyFileName, setStoryFileName] = useState<string>('');
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const storyFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // حالة المنشورات + معرض الصور للمنشور
+  const [postModalOpen, setPostModalOpen] = useState(false);
+  const [postText, setPostText] = useState('');
+  const [postImageData, setPostImageData] = useState<string>('');
+  const [postFileName, setPostFileName] = useState<string>('');
+  const postFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const normalizedQuery = searchQuery.trim().toLowerCase().replace(/^@/, '');
   const filteredFriends = normalizedQuery
@@ -87,20 +93,19 @@ export function WaslHeaderBar({
     { key: 'profile', label: 'حسابي', icon: '👤' },
   ];
 
-  // فتح معرض التلفون مباشرة من أي مكان يطلب إضافة قصة
+  // فتح معرض التلفون للقصة مباشرة
   const openStoryGallery = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-      fileInputRef.current.click();
+    if (storyFileInputRef.current) {
+      storyFileInputRef.current.value = '';
+      storyFileInputRef.current.click();
     } else {
       setStoryModalOpen(true);
     }
   };
 
-  const handlePickGalleryImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePickStoryImage = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setStoryFileName(file.name);
     const reader = new FileReader();
     reader.onload = () => {
@@ -116,9 +121,7 @@ export function WaslHeaderBar({
     setStoryText('');
     setStoryImageData('');
     setStoryFileName('');
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (storyFileInputRef.current) storyFileInputRef.current.value = '';
     setStoryModalOpen(false);
   };
 
@@ -129,14 +132,60 @@ export function WaslHeaderBar({
     resetStoryModal();
   };
 
+  // فتح معرض التلفون للمنشور عند الضغط على زر «صورة»
+  const openPostGallery = () => {
+    if (postFileInputRef.current) {
+      postFileInputRef.current.value = '';
+      postFileInputRef.current.click();
+    } else {
+      setPostModalOpen(true);
+    }
+  };
+
+  const handlePickPostImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPostFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setPostImageData(reader.result);
+        setPostModalOpen(true);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const resetPostModal = () => {
+    setPostText('');
+    setPostImageData('');
+    setPostFileName('');
+    if (postFileInputRef.current) postFileInputRef.current.value = '';
+    setPostModalOpen(false);
+  };
+
+  const handlePostSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!postText.trim() && !postImageData) return;
+    onCreatePostSubmit?.(postText.trim(), postImageData || undefined);
+    resetPostModal();
+  };
+
   return (
     <div dir="rtl" className="w-full bg-slate-950 text-slate-100 select-none">
-      {/* مدخل المعرض العام لأي زر قصة */}
+      {/* مدخلات المعرض المخفية */}
       <input
-        ref={fileInputRef}
+        ref={storyFileInputRef}
         type="file"
         accept="image/*"
-        onChange={handlePickGalleryImage}
+        onChange={handlePickStoryImage}
+        className="hidden"
+      />
+      <input
+        ref={postFileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handlePickPostImage}
         className="hidden"
       />
 
@@ -256,7 +305,7 @@ export function WaslHeaderBar({
         </div>
       )}
 
-      {/* 2. شريط التبويبات العلوي (بنفس شكل فيسبوك) */}
+      {/* 2. شريط التبويبات العلوي */}
       <nav
         aria-label="أقسام التطبيق"
         className="sticky top-0 z-30 grid grid-cols-4 bg-slate-950/95 backdrop-blur border-b border-purple-500/20"
@@ -291,7 +340,7 @@ export function WaslHeaderBar({
         })}
       </nav>
 
-      {/* 3. شريط «بم تفكر؟» */}
+      {/* 3. شريط «بم تفكر؟» الصغير فقط + شريط القصص */}
       {activeTab === 'feed' && (
         <>
           <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-slate-900">
@@ -309,7 +358,7 @@ export function WaslHeaderBar({
 
             <button
               type="button"
-              onClick={onOpenComposer}
+              onClick={() => setPostModalOpen(true)}
               className="flex-1 text-right rounded-full bg-slate-900 border border-slate-800 hover:border-purple-500/35 px-4 py-2 text-xs text-slate-400 transition"
             >
               بم تفكر؟
@@ -317,7 +366,7 @@ export function WaslHeaderBar({
 
             <button
               type="button"
-              onClick={onQuickPhoto}
+              onClick={openPostGallery}
               className="flex flex-col items-center justify-center rounded-xl px-2.5 py-1 text-emerald-400 hover:bg-slate-900 transition"
             >
               <span className="text-base leading-none">🖼️</span>
@@ -403,6 +452,81 @@ export function WaslHeaderBar({
             })}
           </div>
         </>
+      )}
+
+      {/* نافذة إنشاء منشور (كلام كتابي فقط أو صورة من المعرض + كلام كتابي) */}
+      {postModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
+          <form
+            onSubmit={handlePostSave}
+            className="w-full max-w-sm rounded-2xl border border-purple-500/30 bg-slate-900 p-4 space-y-3 shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <h3 className="text-sm font-black text-white">إنشاء منشور</h3>
+              <button
+                type="button"
+                onClick={resetPostModal}
+                className="text-xs text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <textarea
+              rows={3}
+              value={postText}
+              onChange={(e) => setPostText(e.target.value)}
+              placeholder="اكتب كلامك هنا..."
+              className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
+            />
+
+            <button
+              type="button"
+              onClick={openPostGallery}
+              className="w-full flex items-center justify-between rounded-xl border border-dashed border-cyan-500/40 bg-slate-950/90 px-3.5 py-2.5 text-xs font-bold text-cyan-300 hover:bg-slate-950 transition"
+            >
+              <span>{postFileName ? `الصورة: ${postFileName}` : 'إضافة صورة من المعرض (اختياري)'}</span>
+              <span>🖼️</span>
+            </button>
+
+            {postImageData && (
+              <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+                <img
+                  src={postImageData}
+                  alt={postFileName || 'صورة المنشور'}
+                  className="h-40 w-full object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPostImageData('');
+                    setPostFileName('');
+                    if (postFileInputRef.current) postFileInputRef.current.value = '';
+                  }}
+                  className="absolute top-2 left-2 rounded-lg bg-slate-950/85 px-2 py-1 text-[10px] font-bold text-rose-300 hover:text-rose-200"
+                >
+                  إزالة الصورة
+                </button>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={resetPostModal}
+                className="flex-1 rounded-xl border border-slate-800 bg-slate-950 py-2 text-xs font-bold text-slate-300"
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                className="flex-1 rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2 text-xs font-bold text-white"
+              >
+                نشر
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {/* نافذة إتمام ونشر القصة بعد اختيار الصورة من المعرض */}
