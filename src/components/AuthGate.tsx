@@ -119,10 +119,12 @@ export default function AuthGate() {
     const meta = user.user_metadata || {};
     const rawEmail = String(user.email || '').trim();
     const isPhoneLocal = rawEmail.endsWith('@wasl-phone.local');
+    const hasRealEmail = Boolean(rawEmail.includes('@') && !isPhoneLocal);
     const phoneDigits = isPhoneLocal ? rawEmail.replace('@wasl-phone.local', '') : '';
     const resolvedPhone = meta.phone_number ? String(meta.phone_number).trim() : phoneDigits;
-    const accMode: AuthMode = isPhoneLocal || !rawEmail.includes('@') ? 'phone' : 'email';
-    const identifier = accMode === 'phone' ? resolvedPhone : rawEmail;
+
+    const accMode: AuthMode = hasRealEmail ? 'email' : 'phone';
+    const identifier = accMode === 'email' ? rawEmail : resolvedPhone;
     if (!identifier) return;
 
     const resolvedName = meta.full_name
@@ -133,7 +135,7 @@ export default function AuthGate() {
 
     const handle = buildUsername(resolvedName, phoneDigits || resolvedPhone.replace(/\D/g, ''));
     const existing = loadSavedAccounts().find(
-      (item) => item.id === user.id || item.identifier === identifier
+      (item) => item.id === user.id || item.identifier.toLowerCase() === identifier.toLowerCase()
     );
     if (!existing) return;
 
@@ -201,23 +203,34 @@ export default function AuthGate() {
     setForgotOpen(false);
     setIsSignUp(false);
 
-    const resolvedMode: AuthMode = acc.identifier.includes('@') ? 'email' : 'phone';
+    const rawId = String(acc.identifier || '').trim();
+    const isPhoneLocal = rawId.endsWith('@wasl-phone.local');
+    const hasRealEmail = Boolean(rawId.includes('@') && !isPhoneLocal);
+    const resolvedMode: AuthMode = hasRealEmail ? 'email' : 'phone';
     setMode(resolvedMode);
 
-    if (resolvedMode === 'phone') {
-      setPhone(acc.identifier.trim());
+    if (resolvedMode === 'email') {
+      setEmail(rawId);
+      setPhone('');
     } else {
-      setEmail(acc.identifier.trim());
+      setPhone(rawId);
+      setEmail('');
     }
     if (acc.name) setName(acc.name);
 
+    const digits = rawId.replace(/\D/g, '');
+    if (resolvedMode === 'phone' && digits.length < 7) {
+      setShowLoginForm(true);
+      return;
+    }
+
     const effectivePassword =
       acc.password ||
-      (isSameIdentifier(memoryIdentifier, acc.identifier, resolvedMode) ? memoryPassword : '') ||
+      (isSameIdentifier(memoryIdentifier, rawId, resolvedMode) ? memoryPassword : '') ||
       (() => {
         try {
           const savedId = window.localStorage.getItem(LAST_IDENTIFIER_KEY) || '';
-          if (isSameIdentifier(savedId, acc.identifier, resolvedMode)) {
+          if (isSameIdentifier(savedId, rawId, resolvedMode)) {
             return window.localStorage.getItem(LAST_PASSWORD_KEY) || '';
           }
         } catch {
@@ -228,12 +241,9 @@ export default function AuthGate() {
 
     if (effectivePassword) {
       setPassword(effectivePassword);
-      writeLastCredentials(acc.identifier.trim(), effectivePassword);
+      writeLastCredentials(rawId, effectivePassword);
       setLoading(true);
-      const target =
-        resolvedMode === 'email'
-          ? acc.identifier.trim()
-          : toEmail(acc.identifier.replace(/\D/g, ''));
+      const target = resolvedMode === 'email' ? rawId : toEmail(digits);
       const { error } = await supabase.auth.signInWithPassword({
         email: target,
         password: effectivePassword,
