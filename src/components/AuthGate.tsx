@@ -477,3 +477,221 @@ export default function AuthGate() {
               className={`py-2 rounded-lg text-xs font-bold ${
                 mode === 'phone' ? 'bg-gradient-to-l from-cyan-600 to-purple-600 text-white' : 'text-slate-400'
               }`}
+            >
+              بالرقم
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('email')}
+              className={`py-2 rounded-lg text-xs font-bold ${
+                mode === 'email' ? 'bg-gradient-to-l from-cyan-600 to-purple-600 text-white' : 'text-slate-400'
+              }`}
+            >
+              بالبريد
+            </button>
+          </div>
+        )}
+
+        {(isSignUp || showLoginForm) && (
+          <form onSubmit={onSubmit} className="space-y-3">
+            {isSignUp && step === 1 && (
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-300">ما اسمك؟</label>
+                <input
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="الاسم الكامل"
+                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
+                />
+              </div>
+            )}
+
+            {isSignUp && step === 2 && (
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-300">تاريخ الميلاد</label>
+                <input
+                  type="date"
+                  dir="ltr"
+                  required
+                  value={birthDate}
+                  onChange={(e) => setBirthDate(e.target.value)}
+                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
+                />
+              </div>
+            )}
+
+            {isSignUp && step === 3 && (
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-300">النوع</label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setGender('male')}
+                    className={`rounded-xl border py-2.5 text-sm font-bold transition ${
+                      gender === 'male'
+                        ? 'border-cyan-500 bg-cyan-500/15 text-cyan-300'
+                        : 'border-slate-800 bg-slate-950 text-slate-300'
+                    }`}
+                  >
+                    ذكر
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGender('female')}
+                    className={`rounded-xl border py-2.5 text-sm font-bold transition ${
+                      gender === 'female'
+                        ? 'border-purple-500 bg-purple-500/15 text-purple-300'
+                        : 'border-slate-800 bg-slate-950 text-slate-300'
+                    }`}
+                  >
+                    أنثى
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {(!isSignUp || step === 4) && (
+              <>
+                {isSignUp && (
+                  <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-950 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setMode('phone')}
+                      className={`py-2 rounded-lg text-xs font-bold ${
+                        mode === 'phone' ? 'bg-gradient-to-l from-cyan-600 to-purple-600 text-white' : 'text-slate-400'
+                      }`}
+                    >
+                      بالرقم
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMode('email')}
+                      className={`py-2 rounded-lg text-xs font-bold ${
+                        mode === 'email' ? 'bg-gradient-to-l from-cyan-600 to-purple-600 text-white' : 'text-slate-400'
+                      }`}
+                    >
+                      بالبريد
+                    </button>
+                  </div>
+                )}
+
+                {mode === 'phone' ? (
+                  <input
+                    type="tel"
+                    dir="ltr"
+                    required
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="09xxxxxxxx"
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
+                  />
+                ) : (
+                  <input
+                    type="email"
+                    dir="ltr"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@example.com"
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
+                  />
+                )}
+
+                <input
+                  type="password"
+                  dir="ltr"
+                  required
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="كلمة المرور"
+                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
+                />
+
+                {!isSignUp && (
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setForgotOpen((v) => !v)}
+                      className="text-xs text-purple-300 hover:text-purple-200"
+                    >
+                      نسيت كلمة السر؟
+                    </button>
+                  </div>
+                )}
+
+                {!isSignUp && forgotOpen && (
+                  <div className="space-y-2 rounded-xl border border-purple-500/25 bg-slate-950/80 p-3">
+                    <p className="text-[11px] leading-relaxed text-slate-300">
+                      {mode === 'email'
+                        ? 'سيتم إرسال رابط إعادة تعيين كلمة السر إلى البريد المكتوب أعلاه.'
+                        : 'إذا كنت مسجلاً بالبريد، بدّل إلى «بالبريد» واكتب بريدك لإرسال رابط الاستعادة.'}
+                    </p>
+                    <button
+                      type="button"
+                      disabled={resetLoading}
+                      onClick={handleForgotPassword}
+                      className="w-full rounded-lg border border-purple-500/40 bg-purple-600/20 py-2 text-xs font-bold text-purple-200 hover:bg-purple-600/30 disabled:opacity-50"
+                    >
+                      {resetLoading ? 'جاري الإرسال...' : 'إرسال رابط استعادة كلمة السر'}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+
+            {err && <p className="text-xs text-rose-400">{err}</p>}
+            {msg && <p className="text-xs text-cyan-300">{msg}</p>}
+
+            <div className="flex gap-2">
+              {isSignUp && step > 1 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErr(null);
+                    setStep((s) => (s - 1) as 1 | 2 | 3 | 4);
+                  }}
+                  className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-sm font-bold text-slate-300"
+                >
+                  السابق
+                </button>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex-1 rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2.5 text-sm font-bold text-white"
+              >
+                {loading
+                  ? 'جاري التنفيذ...'
+                  : isSignUp
+                  ? step < 4
+                    ? 'التالي'
+                    : 'إنشاء حساب'
+                  : 'تسجيل الدخول'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {(isSignUp || showLoginForm) && (
+          <button
+            type="button"
+            onClick={() => {
+              setErr(null);
+              setMsg(null);
+              setForgotOpen(false);
+              setStep(1);
+              setIsSignUp(!isSignUp);
+            }}
+            className="w-full text-center text-xs text-cyan-400"
+          >
+            {isSignUp ? 'عندك حساب؟ سجّل الدخول' : 'ما عندك حساب؟ أنشئ حساباً جديداً'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
