@@ -117,16 +117,19 @@ export default function AuthGate() {
   } | null) => {
     if (!user) return;
     const meta = user.user_metadata || {};
-    const rawEmail = String(user.email || '');
+    const rawEmail = String(user.email || '').trim();
     const isPhoneLocal = rawEmail.endsWith('@wasl-phone.local');
     const phoneDigits = isPhoneLocal ? rawEmail.replace('@wasl-phone.local', '') : '';
     const resolvedPhone = meta.phone_number ? String(meta.phone_number).trim() : phoneDigits;
-    const resolvedName = meta.full_name
-      ? String(meta.full_name).trim()
-      : resolvedPhone || (rawEmail ? rawEmail.split('@')[0] : 'مستخدم وِصل');
-    const accMode: AuthMode = isPhoneLocal || resolvedPhone ? 'phone' : 'email';
+    const accMode: AuthMode = isPhoneLocal || !rawEmail.includes('@') ? 'phone' : 'email';
     const identifier = accMode === 'phone' ? resolvedPhone : rawEmail;
     if (!identifier) return;
+
+    const resolvedName = meta.full_name
+      ? String(meta.full_name).trim()
+      : accMode === 'email'
+      ? rawEmail.split('@')[0]
+      : resolvedPhone || 'مستخدم وِصل';
 
     const handle = buildUsername(resolvedName, phoneDigits || resolvedPhone.replace(/\D/g, ''));
     const existing = loadSavedAccounts().find(
@@ -180,28 +183,41 @@ export default function AuthGate() {
     });
   };
 
+  const isSameIdentifier = (a: string, b: string, accMode: AuthMode) => {
+    const cleanA = a.trim().toLowerCase();
+    const cleanB = b.trim().toLowerCase();
+    if (!cleanA || !cleanB) return false;
+    if (accMode === 'email') {
+      return cleanA === cleanB;
+    }
+    const digitsA = cleanA.replace(/\D/g, '');
+    const digitsB = cleanB.replace(/\D/g, '');
+    return Boolean(digitsA && digitsB && digitsA === digitsB);
+  };
+
   const handleSelectSavedAccount = async (acc: SavedAccount) => {
     setErr(null);
     setMsg(null);
     setForgotOpen(false);
     setIsSignUp(false);
-    setMode(acc.mode);
 
-    const digits = acc.identifier.replace(/\D/g, '');
-    if (acc.mode === 'phone') {
-      setPhone(acc.identifier);
+    const resolvedMode: AuthMode = acc.identifier.includes('@') ? 'email' : 'phone';
+    setMode(resolvedMode);
+
+    if (resolvedMode === 'phone') {
+      setPhone(acc.identifier.trim());
     } else {
-      setEmail(acc.identifier);
+      setEmail(acc.identifier.trim());
     }
     if (acc.name) setName(acc.name);
 
     const effectivePassword =
       acc.password ||
-      (memoryIdentifier === acc.identifier ? memoryPassword : '') ||
+      (isSameIdentifier(memoryIdentifier, acc.identifier, resolvedMode) ? memoryPassword : '') ||
       (() => {
         try {
-          const savedId = window.localStorage.getItem(LAST_IDENTIFIER_KEY);
-          if (savedId && savedId === acc.identifier) {
+          const savedId = window.localStorage.getItem(LAST_IDENTIFIER_KEY) || '';
+          if (isSameIdentifier(savedId, acc.identifier, resolvedMode)) {
             return window.localStorage.getItem(LAST_PASSWORD_KEY) || '';
           }
         } catch {
@@ -212,9 +228,12 @@ export default function AuthGate() {
 
     if (effectivePassword) {
       setPassword(effectivePassword);
-      writeLastCredentials(acc.identifier, effectivePassword);
+      writeLastCredentials(acc.identifier.trim(), effectivePassword);
       setLoading(true);
-      const target = acc.mode === 'phone' ? toEmail(digits) : acc.identifier.trim();
+      const target =
+        resolvedMode === 'email'
+          ? acc.identifier.trim()
+          : toEmail(acc.identifier.replace(/\D/g, ''));
       const { error } = await supabase.auth.signInWithPassword({
         email: target,
         password: effectivePassword,
@@ -223,7 +242,6 @@ export default function AuthGate() {
       if (!error) {
         return;
       }
-      setErr('تعذر الدخول تلقائياً، اكتب كلمة المرور لإكمال الدخول.');
     }
 
     setShowLoginForm(true);
@@ -309,10 +327,10 @@ export default function AuthGate() {
       return;
     }
 
-    const target = mode === 'phone' ? toEmail(digits) : email.trim();
-    const handle = buildUsername(cleanName || 'user', digits);
     const cleanPhone = mode === 'phone' ? phone.trim() : '';
     const cleanEmail = mode === 'email' ? email.trim() : '';
+    const target = mode === 'phone' ? toEmail(digits) : cleanEmail;
+    const handle = buildUsername(cleanName || 'user', digits);
     const activeIdentifier = mode === 'phone' ? cleanPhone : cleanEmail;
 
     writeLastCredentials(activeIdentifier, password);
