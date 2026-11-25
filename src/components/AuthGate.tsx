@@ -12,6 +12,7 @@ interface SavedAccount {
   mode: AuthMode;
   username: string;
   avatar?: string;
+  password?: string;
 }
 
 const SAVED_ACCOUNTS_KEY = 'wasl_saved_accounts_v1';
@@ -74,14 +75,6 @@ export default function AuthGate() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    const list = loadSavedAccounts();
-    setSavedAccounts(list);
-    if (list.length > 0) {
-      setShowLoginForm(false);
-    }
-  }, []);
-
   const saveAccountToList = (acc: SavedAccount) => {
     setSavedAccounts((prev) => {
       const base = prev.length > 0 ? prev : loadSavedAccounts();
@@ -94,6 +87,63 @@ export default function AuthGate() {
     });
   };
 
+  const captureSessionAccount = (user: {
+    id?: string;
+    email?: string | null;
+    user_metadata?: Record<string, unknown>;
+  } | null) => {
+    if (!user) return;
+    const meta = user.user_metadata || {};
+    const rawEmail = String(user.email || '');
+    const isPhoneLocal = rawEmail.endsWith('@wasl-phone.local');
+    const phoneDigits = isPhoneLocal ? rawEmail.replace('@wasl-phone.local', '') : '';
+    const resolvedPhone = meta.phone_number ? String(meta.phone_number).trim() : phoneDigits;
+    const resolvedName = meta.full_name
+      ? String(meta.full_name).trim()
+      : resolvedPhone || (rawEmail ? rawEmail.split('@')[0] : 'مستخدم وِصل');
+    const accMode: AuthMode = isPhoneLocal || resolvedPhone ? 'phone' : 'email';
+    const identifier = accMode === 'phone' ? resolvedPhone : rawEmail;
+    if (!identifier) return;
+
+    const handle = buildUsername(resolvedName, phoneDigits || resolvedPhone.replace(/\D/g, ''));
+    const existing = loadSavedAccounts().find(
+      (item) => item.id === user.id || item.identifier === identifier
+    );
+    saveAccountToList({
+      id: user.id || identifier,
+      name: resolvedName,
+      identifier,
+      mode: accMode,
+      username: handle,
+      avatar: meta.avatar_url ? String(meta.avatar_url) : existing?.avatar,
+      password: existing?.password,
+    });
+  };
+
+  useEffect(() => {
+    const list = loadSavedAccounts();
+    setSavedAccounts(list);
+    if (list.length > 0) {
+      setShowLoginForm(false);
+    }
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session?.user) {
+        captureSessionAccount(data.session.user);
+      }
+    });
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        captureSessionAccount(session.user);
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
   const removeSavedAccount = (id: string) => {
     setSavedAccounts((prev) => {
       const next = prev.filter((item) => item.id !== id);
@@ -105,19 +155,67 @@ export default function AuthGate() {
     });
   };
 
-  const handleSelectSavedAccount = (acc: SavedAccount) => {
+  const handleSelectSavedAccount = async (acc: SavedAccount) => {
     setErr(null);
     setMsg(null);
     setForgotOpen(false);
     setIsSignUp(false);
-    setShowLoginForm(true);
     setMode(acc.mode);
+
+    const digits = acc.identifier.replace(/\D/g, '');
     if (acc.mode === 'phone') {
       setPhone(acc.identifier);
     } else {
       setEmail(acc.identifier);
     }
     if (acc.name) setName(acc.name);
+
+    if (acc.password) {
+      setPassword(acc.password);
+      setLoading(true);
+      const target = acc.mode === 'phone' ? toEmail(digits) : acc.identifier.trim();
+      const { error } = await supabase.auth.signInWithPassword({
+        email: target,
+        password: acc.password,
+      });
+      setLoading(false);
+      if (!error) {
+        return;
+      }
+      setErr('تعذر الدخول تلقائياً، اكتب كلمة المرور لإكمال الدخول.');
+    }
+
+    setShowLoginForm(true);
+  };
+
+  const handleManualSaveCurrentInput = () => {
+    setErr(null);
+    setMsg(null);
+    const digits = phone.replace(/\D/g, '');
+    const cleanEmail = email.trim();
+
+    if (mode === 'phone' && digits.length < 7) {
+      setErr('اكتب رقم الهاتف أولاً لحفظ الحساب في القائمة.');
+      return;
+    }
+    if (mode === 'email' && !cleanEmail) {
+      setErr('اكتب البريد الإلكتروني أولاً لحفظ الحساب في القائمة.');
+      return;
+    }
+
+    const identifier = mode === 'phone' ? phone.trim() : cleanEmail;
+    const displayName = name.trim() || identifier;
+    const handle = buildUsername(displayName, digits);
+
+    saveAccountToList({
+      id: `manual_${mode}_${identifier}`,
+      name: displayName,
+      identifier,
+      mode,
+      username: handle,
+      ...(password.trim() ? { password: password.trim() } : {}),
+    });
+    setMsg('تم حفظ الحساب في القائمة.');
   };
 
   const handleForgotPassword = async () => {
@@ -235,6 +333,7 @@ export default function AuthGate() {
           mode,
           username: handle,
           avatar: data.user?.user_metadata?.avatar_url,
+          ...(password.trim() ? { password: password.trim() } : {}),
         });
         setMsg(data.session ? 'تم إنشاء الحساب وتسجيل الدخول.' : 'تم إنشاء الحساب بنجاح.');
       }
@@ -266,6 +365,7 @@ export default function AuthGate() {
           mode,
           username: resolvedHandle,
           avatar: meta?.avatar_url ? String(meta.avatar_url) : undefined,
+          ...(password.trim() ? { password: password.trim() } : {}),
         });
       }
     }
@@ -298,8 +398,9 @@ export default function AuthGate() {
               >
                 <button
                   type="button"
+                  disabled={loading}
                   onClick={() => handleSelectSavedAccount(acc)}
-                  className="flex flex-1 items-center gap-3 text-right min-w-0"
+                  className="flex flex-1 items-center gap-3 text-right min-w-0 disabled:opacity-60"
                 >
                   {acc.avatar ? (
                     <img
@@ -519,7 +620,14 @@ export default function AuthGate() {
                 />
 
                 {!isSignUp && (
-                  <div className="flex justify-end">
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={handleManualSaveCurrentInput}
+                      className="text-xs text-cyan-300 hover:text-cyan-200"
+                    >
+                      حفظ الحساب في القائمة
+                    </button>
                     <button
                       type="button"
                       onClick={() => setForgotOpen((v) => !v)}
