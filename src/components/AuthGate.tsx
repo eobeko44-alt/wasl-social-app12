@@ -11,6 +11,7 @@ interface SavedAccount {
   identifier: string;
   mode: AuthMode;
   username: string;
+  avatar?: string;
 }
 
 const SAVED_ACCOUNTS_KEY = 'wasl_saved_accounts_v1';
@@ -36,18 +37,18 @@ function loadSavedAccounts(): SavedAccount[] {
       }
     }
   } catch {
-    // fallback to memoryAccounts
+    // ignore storage read error
   }
   return memoryAccounts;
 }
 
 function persistSavedAccounts(list: SavedAccount[]) {
-  const sliced = list.slice(0, 6);
+  const sliced = list.slice(0, 8);
   memoryAccounts = sliced;
   try {
     window.localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(sliced));
   } catch {
-    // ignore storage restriction
+    // ignore storage write error
   }
 }
 
@@ -65,6 +66,7 @@ export default function AuthGate() {
   const [password, setPassword] = useState('');
 
   const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>(() => loadSavedAccounts());
+  const [showLoginForm, setShowLoginForm] = useState<boolean>(() => loadSavedAccounts().length === 0);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
 
@@ -73,7 +75,11 @@ export default function AuthGate() {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    setSavedAccounts(loadSavedAccounts());
+    const list = loadSavedAccounts();
+    setSavedAccounts(list);
+    if (list.length > 0) {
+      setShowLoginForm(false);
+    }
   }, []);
 
   const saveAccountToList = (acc: SavedAccount) => {
@@ -92,6 +98,9 @@ export default function AuthGate() {
     setSavedAccounts((prev) => {
       const next = prev.filter((item) => item.id !== id);
       persistSavedAccounts(next);
+      if (next.length === 0) {
+        setShowLoginForm(true);
+      }
       return next;
     });
   };
@@ -101,6 +110,7 @@ export default function AuthGate() {
     setMsg(null);
     setForgotOpen(false);
     setIsSignUp(false);
+    setShowLoginForm(true);
     setMode(acc.mode);
     if (acc.mode === 'phone') {
       setPhone(acc.identifier);
@@ -224,6 +234,7 @@ export default function AuthGate() {
           identifier: mode === 'phone' ? cleanPhone : cleanEmail,
           mode,
           username: handle,
+          avatar: data.user?.user_metadata?.avatar_url,
         });
         setMsg(data.session ? 'تم إنشاء الحساب وتسجيل الدخول.' : 'تم إنشاء الحساب بنجاح.');
       }
@@ -254,6 +265,7 @@ export default function AuthGate() {
           identifier: mode === 'phone' ? resolvedPhone || cleanPhone : cleanEmail,
           mode,
           username: resolvedHandle,
+          avatar: meta?.avatar_url ? String(meta.avatar_url) : undefined,
         });
       }
     }
@@ -263,58 +275,92 @@ export default function AuthGate() {
   return (
     <div dir="rtl" className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md rounded-2xl border border-purple-500/25 bg-slate-900/90 p-6 space-y-4">
-        <div className="text-center space-y-1">
+        <div className="text-center space-y-2">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-l from-cyan-500 to-purple-600 text-xl font-black text-white shadow-lg shadow-purple-900/40">
+            و
+          </div>
           <h1 className="text-2xl font-black text-white">وِصل</h1>
           <p className="text-xs text-slate-400">
-            {isSignUp ? `إنشاء حساب جديد — خطوة ${step} من 4` : 'تسجيل الدخول إلى حسابك'}
+            {isSignUp
+              ? `إنشاء حساب جديد — خطوة ${step} من 4`
+              : savedAccounts.length > 0 && !showLoginForm
+              ? 'اختر حساباً للدخول السريع'
+              : 'تسجيل الدخول إلى حسابك'}
           </p>
         </div>
 
-        {!isSignUp && (
-          <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-slate-400">الحسابات المحفوظة</span>
-              <span className="text-[11px] text-cyan-400">{savedAccounts.length}</span>
-            </div>
-
-            {savedAccounts.length === 0 ? (
-              <p className="py-1.5 text-center text-[11px] text-slate-500">
-                لا توجد حسابات محفوظة بعد. سجّل دخولك بأي حساب ليُحفظ هنا للتبديل السريع.
-              </p>
-            ) : (
-              <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                {savedAccounts.map((acc) => (
-                  <div
-                    key={acc.id}
-                    className="flex items-center justify-between gap-2 rounded-xl border border-slate-800/90 bg-slate-900 px-3 py-2"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleSelectSavedAccount(acc)}
-                      className="flex flex-1 items-center gap-2.5 text-right"
-                    >
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 text-xs font-black text-cyan-300 border border-cyan-500/20">
-                        {(acc.name || 'و').slice(0, 1)}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-bold text-white">{acc.name}</p>
-                        <p className="truncate text-[11px] text-slate-400" dir="ltr">
-                          {acc.identifier}
-                        </p>
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeSavedAccount(acc.id)}
-                      title="إزالة الحساب"
-                      className="rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-rose-950/40 hover:text-rose-400"
-                    >
-                      إزالة
-                    </button>
+        {!isSignUp && savedAccounts.length > 0 && (
+          <div className="space-y-2.5 max-h-64 overflow-y-auto pr-0.5">
+            {savedAccounts.map((acc) => (
+              <div
+                key={acc.id}
+                className="flex items-center justify-between gap-2 rounded-2xl border border-slate-800 bg-slate-950/85 px-3.5 py-3 hover:border-purple-500/35 transition"
+              >
+                <button
+                  type="button"
+                  onClick={() => handleSelectSavedAccount(acc)}
+                  className="flex flex-1 items-center gap-3 text-right min-w-0"
+                >
+                  {acc.avatar ? (
+                    <img
+                      src={acc.avatar}
+                      alt={acc.name}
+                      className="h-11 w-11 shrink-0 rounded-full object-cover border border-cyan-500/30"
+                    />
+                  ) : (
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 text-sm font-black text-cyan-300 border border-cyan-500/25">
+                      {(acc.name || 'و').slice(0, 1)}
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold text-white">{acc.name}</p>
+                    <p className="truncate text-[11px] text-slate-400" dir="ltr">
+                      {acc.identifier}
+                    </p>
                   </div>
-                ))}
+                  <span className="text-slate-500 text-base font-bold px-1">&lt;</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeSavedAccount(acc.id)}
+                  title="إزالة الحساب"
+                  className="rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-rose-950/40 hover:text-rose-400"
+                >
+                  إزالة
+                </button>
               </div>
-            )}
+            ))}
+          </div>
+        )}
+
+        {!isSignUp && savedAccounts.length > 0 && !showLoginForm && (
+          <div className="space-y-2.5 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setErr(null);
+                setMsg(null);
+                setPhone('');
+                setEmail('');
+                setPassword('');
+                setShowLoginForm(true);
+              }}
+              className="w-full rounded-xl border border-slate-700 bg-slate-950/80 py-2.5 text-xs font-bold text-slate-200 hover:border-cyan-500/40 transition"
+            >
+              استخدام ملف شخصي آخر
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setErr(null);
+                setMsg(null);
+                setStep(1);
+                setIsSignUp(true);
+              }}
+              className="w-full rounded-xl border border-cyan-500/50 bg-cyan-500/10 py-2.5 text-xs font-bold text-cyan-300 hover:bg-cyan-500/15 transition"
+            >
+              إنشاء حساب جديد
+            </button>
           </div>
         )}
 
@@ -331,7 +377,7 @@ export default function AuthGate() {
           </div>
         )}
 
-        {!isSignUp && (
+        {!isSignUp && showLoginForm && (
           <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-950 p-1">
             <button
               type="button"
@@ -354,201 +400,205 @@ export default function AuthGate() {
           </div>
         )}
 
-        <form onSubmit={onSubmit} className="space-y-3">
-          {isSignUp && step === 1 && (
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-300">ما اسمك؟</label>
-              <input
-                type="text"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="الاسم الكامل"
-                className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
-              />
-            </div>
-          )}
-
-          {isSignUp && step === 2 && (
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-300">تاريخ الميلاد</label>
-              <input
-                type="date"
-                dir="ltr"
-                required
-                value={birthDate}
-                onChange={(e) => setBirthDate(e.target.value)}
-                className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
-              />
-            </div>
-          )}
-
-          {isSignUp && step === 3 && (
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-300">النوع</label>
-              <div className="grid grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setGender('male')}
-                  className={`rounded-xl border py-2.5 text-sm font-bold transition ${
-                    gender === 'male'
-                      ? 'border-cyan-500 bg-cyan-500/15 text-cyan-300'
-                      : 'border-slate-800 bg-slate-950 text-slate-300'
-                  }`}
-                >
-                  ذكر
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setGender('female')}
-                  className={`rounded-xl border py-2.5 text-sm font-bold transition ${
-                    gender === 'female'
-                      ? 'border-purple-500 bg-purple-500/15 text-purple-300'
-                      : 'border-slate-800 bg-slate-950 text-slate-300'
-                  }`}
-                >
-                  أنثى
-                </button>
+        {(isSignUp || showLoginForm) && (
+          <form onSubmit={onSubmit} className="space-y-3">
+            {isSignUp && step === 1 && (
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-300">ما اسمك؟</label>
+                <input
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="الاسم الكامل"
+                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
+                />
               </div>
-            </div>
-          )}
-
-          {(!isSignUp || step === 4) && (
-            <>
-              {isSignUp && (
-                <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-950 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setMode('phone')}
-                    className={`py-2 rounded-lg text-xs font-bold ${
-                      mode === 'phone' ? 'bg-gradient-to-l from-cyan-600 to-purple-600 text-white' : 'text-slate-400'
-                    }`}
-                  >
-                    بالرقم
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMode('email')}
-                    className={`py-2 rounded-lg text-xs font-bold ${
-                      mode === 'email' ? 'bg-gradient-to-l from-cyan-600 to-purple-600 text-white' : 'text-slate-400'
-                    }`}
-                  >
-                    بالبريد
-                  </button>
-                </div>
-              )}
-
-              {mode === 'phone' ? (
-                <input
-                  type="tel"
-                  dir="ltr"
-                  required
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="09xxxxxxxx"
-                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
-                />
-              ) : (
-                <input
-                  type="email"
-                  dir="ltr"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@example.com"
-                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
-                />
-              )}
-
-              <input
-                type="password"
-                dir="ltr"
-                required
-                minLength={6}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="كلمة المرور"
-                className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
-              />
-
-              {!isSignUp && (
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setForgotOpen((v) => !v)}
-                    className="text-xs text-purple-300 hover:text-purple-200"
-                  >
-                    نسيت كلمة السر؟
-                  </button>
-                </div>
-              )}
-
-              {!isSignUp && forgotOpen && (
-                <div className="space-y-2 rounded-xl border border-purple-500/25 bg-slate-950/80 p-3">
-                  <p className="text-[11px] leading-relaxed text-slate-300">
-                    {mode === 'email'
-                      ? 'سيتم إرسال رابط إعادة تعيين كلمة السر إلى البريد المكتوب أعلاه.'
-                      : 'إذا كنت مسجلاً بالبريد، بدّل إلى «بالبريد» واكتب بريدك لإرسال رابط الاستعادة.'}
-                  </p>
-                  <button
-                    type="button"
-                    disabled={resetLoading}
-                    onClick={handleForgotPassword}
-                    className="w-full rounded-lg border border-purple-500/40 bg-purple-600/20 py-2 text-xs font-bold text-purple-200 hover:bg-purple-600/30 disabled:opacity-50"
-                  >
-                    {resetLoading ? 'جاري الإرسال...' : 'إرسال رابط استعادة كلمة السر'}
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-
-          {err && <p className="text-xs text-rose-400">{err}</p>}
-          {msg && <p className="text-xs text-cyan-300">{msg}</p>}
-
-          <div className="flex gap-2">
-            {isSignUp && step > 1 && (
-              <button
-                type="button"
-                onClick={() => {
-                  setErr(null);
-                  setStep((s) => (s - 1) as 1 | 2 | 3 | 4);
-                }}
-                className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-sm font-bold text-slate-300"
-              >
-                السابق
-              </button>
             )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex-1 rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2.5 text-sm font-bold text-white"
-            >
-              {loading
-                ? 'جاري التنفيذ...'
-                : isSignUp
-                ? step < 4
-                  ? 'التالي'
-                  : 'إنشاء حساب'
-                : 'تسجيل الدخول'}
-            </button>
-          </div>
-        </form>
+            {isSignUp && step === 2 && (
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-300">تاريخ الميلاد</label>
+                <input
+                  type="date"
+                  dir="ltr"
+                  required
+                  value={birthDate}
+                  onChange={(e) => setBirthDate(e.target.value)}
+                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
+                />
+              </div>
+            )}
 
-        <button
-          type="button"
-          onClick={() => {
-            setErr(null);
-            setMsg(null);
-            setForgotOpen(false);
-            setStep(1);
-            setIsSignUp(!isSignUp);
-          }}
-          className="w-full text-center text-xs text-cyan-400"
-        >
-          {isSignUp ? 'عندك حساب؟ سجّل الدخول' : 'ما عندك حساب؟ أنشئ حساباً جديداً'}
-        </button>
+            {isSignUp && step === 3 && (
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-300">النوع</label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setGender('male')}
+                    className={`rounded-xl border py-2.5 text-sm font-bold transition ${
+                      gender === 'male'
+                        ? 'border-cyan-500 bg-cyan-500/15 text-cyan-300'
+                        : 'border-slate-800 bg-slate-950 text-slate-300'
+                    }`}
+                  >
+                    ذكر
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGender('female')}
+                    className={`rounded-xl border py-2.5 text-sm font-bold transition ${
+                      gender === 'female'
+                        ? 'border-purple-500 bg-purple-500/15 text-purple-300'
+                        : 'border-slate-800 bg-slate-950 text-slate-300'
+                    }`}
+                  >
+                    أنثى
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {(!isSignUp || step === 4) && (
+              <>
+                {isSignUp && (
+                  <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-950 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setMode('phone')}
+                      className={`py-2 rounded-lg text-xs font-bold ${
+                        mode === 'phone' ? 'bg-gradient-to-l from-cyan-600 to-purple-600 text-white' : 'text-slate-400'
+                      }`}
+                    >
+                      بالرقم
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMode('email')}
+                      className={`py-2 rounded-lg text-xs font-bold ${
+                        mode === 'email' ? 'bg-gradient-to-l from-cyan-600 to-purple-600 text-white' : 'text-slate-400'
+                      }`}
+                    >
+                      بالبريد
+                    </button>
+                  </div>
+                )}
+
+                {mode === 'phone' ? (
+                  <input
+                    type="tel"
+                    dir="ltr"
+                    required
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="09xxxxxxxx"
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
+                  />
+                ) : (
+                  <input
+                    type="email"
+                    dir="ltr"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@example.com"
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
+                  />
+                )}
+
+                <input
+                  type="password"
+                  dir="ltr"
+                  required
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="كلمة المرور"
+                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
+                />
+
+                {!isSignUp && (
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setForgotOpen((v) => !v)}
+                      className="text-xs text-purple-300 hover:text-purple-200"
+                    >
+                      نسيت كلمة السر؟
+                    </button>
+                  </div>
+                )}
+
+                {!isSignUp && forgotOpen && (
+                  <div className="space-y-2 rounded-xl border border-purple-500/25 bg-slate-950/80 p-3">
+                    <p className="text-[11px] leading-relaxed text-slate-300">
+                      {mode === 'email'
+                        ? 'سيتم إرسال رابط إعادة تعيين كلمة السر إلى البريد المكتوب أعلاه.'
+                        : 'إذا كنت مسجلاً بالبريد، بدّل إلى «بالبريد» واكتب بريدك لإرسال رابط الاستعادة.'}
+                    </p>
+                    <button
+                      type="button"
+                      disabled={resetLoading}
+                      onClick={handleForgotPassword}
+                      className="w-full rounded-lg border border-purple-500/40 bg-purple-600/20 py-2 text-xs font-bold text-purple-200 hover:bg-purple-600/30 disabled:opacity-50"
+                    >
+                      {resetLoading ? 'جاري الإرسال...' : 'إرسال رابط استعادة كلمة السر'}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+
+            {err && <p className="text-xs text-rose-400">{err}</p>}
+            {msg && <p className="text-xs text-cyan-300">{msg}</p>}
+
+            <div className="flex gap-2">
+              {isSignUp && step > 1 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErr(null);
+                    setStep((s) => (s - 1) as 1 | 2 | 3 | 4);
+                  }}
+                  className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-sm font-bold text-slate-300"
+                >
+                  السابق
+                </button>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex-1 rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2.5 text-sm font-bold text-white"
+              >
+                {loading
+                  ? 'جاري التنفيذ...'
+                  : isSignUp
+                  ? step < 4
+                    ? 'التالي'
+                    : 'إنشاء حساب'
+                  : 'تسجيل الدخول'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {(isSignUp || showLoginForm) && (
+          <button
+            type="button"
+            onClick={() => {
+              setErr(null);
+              setMsg(null);
+              setForgotOpen(false);
+              setStep(1);
+              setIsSignUp(!isSignUp);
+            }}
+            className="w-full text-center text-xs text-cyan-400"
+          >
+            {isSignUp ? 'عندك حساب؟ سجّل الدخول' : 'ما عندك حساب؟ أنشئ حساباً جديداً'}
+          </button>
+        )}
       </div>
     </div>
   );
