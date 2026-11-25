@@ -1,17 +1,33 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Conversation, Post, Story, User } from '@/types';
 import { currentUser, mockConversations, mockPosts, mockStories, mockUsers } from '@/data/mockData';
 
 let idCounter = 100;
 const nextId = () => `new-${idCounter++}`;
 
+let sharedProfile: User = currentUser;
+const profileListeners = new Set<(next: User) => void>();
+
+function setSharedProfile(next: User) {
+  sharedProfile = next;
+  profileListeners.forEach((fn) => fn(next));
+}
+
 export function useAppStore() {
   const [users, setUsers] = useState<User[]>(mockUsers);
   const [posts, setPosts] = useState<Post[]>(mockPosts);
   const [conversations, setConversations] = useState<Conversation[]>(mockConversations);
   const [stories, setStories] = useState<Story[]>(mockStories);
-  const [profile, setProfile] = useState<User>(currentUser);
+  const [profile, setProfile] = useState<User>(sharedProfile);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(mockConversations[0].id);
+
+  useEffect(() => {
+    setProfile(sharedProfile);
+    profileListeners.add(setProfile);
+    return () => {
+      profileListeners.delete(setProfile);
+    };
+  }, []);
 
   const totalUnread = useMemo(
     () => conversations.reduce((sum, c) => sum + c.unread, 0),
@@ -68,19 +84,19 @@ export function useAppStore() {
               ...p,
               comments: [
                 ...p.comments,
-                { id: nextId(), author: profile, text, createdAt: 'الآن' },
+                { id: nextId(), author: sharedProfile, text, createdAt: 'الآن' },
               ],
             }
           : p
       )
     );
-  }, [profile]);
+  }, []);
 
   const createPost = useCallback((text: string, imageUrl?: string) => {
     setPosts((prev) => [
       {
         id: nextId(),
-        author: profile,
+        author: sharedProfile,
         text,
         imageUrl,
         createdAt: 'الآن',
@@ -90,7 +106,7 @@ export function useAppStore() {
       },
       ...prev,
     ]);
-  }, [profile]);
+  }, []);
 
   const sendMessage = useCallback((conversationId: string, text: string) => {
     setConversations((prev) =>
@@ -131,7 +147,7 @@ export function useAppStore() {
   }, []);
 
   const updateProfile = useCallback((updates: Partial<User>) => {
-    setProfile((prev) => ({ ...prev, ...updates }));
+    setSharedProfile({ ...sharedProfile, ...updates });
   }, []);
 
   const discoverPeople = useMemo(() => users.filter((u) => !u.isFriend), [users]);
