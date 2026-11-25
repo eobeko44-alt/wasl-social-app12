@@ -60,24 +60,102 @@ interface PersistedProfileData {
   posts: ActivityPostItem[];
 }
 
-const STORAGE_KEY = 'wasl_persistent_profile_v1';
+const META_STORAGE_KEY = 'wasl_profile_meta_v3';
+const POSTS_STORAGE_KEY = 'wasl_profile_posts_v3';
+const DB_NAME = 'wasl_profile_db_v1';
+const DB_STORE = 'profile_state';
 
-function loadPersistedProfile(): Partial<PersistedProfileData> {
+function openProfileDB(): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    try {
+      if (typeof indexedDB === 'undefined') {
+        resolve(null);
+        return;
+      }
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(DB_STORE)) {
+          db.createObjectStore(DB_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function saveToIndexedDB(data: PersistedProfileData) {
+  const db = await openProfileDB();
+  if (!db) return;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) as Partial<PersistedProfileData>;
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).put(data, 'main');
   } catch {
-    return {};
+    // تجاهل
   }
 }
 
-function savePersistedProfile(data: PersistedProfileData) {
+async function loadFromIndexedDB(): Promise<Partial<PersistedProfileData> | null> {
+  const db = await openProfileDB();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(DB_STORE, 'readonly');
+      const req = tx.objectStore(DB_STORE).get('main');
+      req.onsuccess = () => resolve((req.result as Partial<PersistedProfileData>) || null);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function loadLocalSnapshot(): Partial<PersistedProfileData> {
+  const result: Partial<PersistedProfileData> = {};
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    const metaRaw = localStorage.getItem(META_STORAGE_KEY);
+    if (metaRaw) {
+      Object.assign(result, JSON.parse(metaRaw));
+    }
   } catch {
-    // تجاهل خطأ امتلاء التخزين إن حدث
+    // تجاهل
   }
+  try {
+    const postsRaw = localStorage.getItem(POSTS_STORAGE_KEY);
+    if (postsRaw) {
+      result.posts = JSON.parse(postsRaw) as ActivityPostItem[];
+    }
+  } catch {
+    // تجاهل
+  }
+  return result;
+}
+
+function saveLocalSnapshot(data: PersistedProfileData) {
+  const { posts, ...metaOnly } = data;
+  try {
+    localStorage.setItem(META_STORAGE_KEY, JSON.stringify(metaOnly));
+  } catch {
+    // تجاهل
+  }
+  try {
+    localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(posts));
+  } catch {
+    // في حال كبر حجم الصور في localStorage، يظل IndexedDB حافظاً لكامل البيانات بدون قيود
+  }
+  void saveToIndexedDB(data);
+}
+
+function readRawFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
 }
 
 export default function ProfileTab() {
@@ -90,7 +168,7 @@ export default function ProfileTab() {
       ? store.contacts
       : [];
 
-  const saved = loadPersistedProfile();
+  const initialSaved = loadLocalSnapshot();
 
   const displayName =
     profile.name && profile.name !== 'أنت' ? String(profile.name) : 'abobaker096605';
@@ -100,14 +178,14 @@ export default function ProfileTab() {
 
   const [activeSubTab, setActiveSubTab] = useState<ProfileSectionTab>('all');
   const [coverImage, setCoverImage] = useState<string>(
-    saved.coverImage || profile.coverImage || profile.cover || ''
+    initialSaved.coverImage || profile.coverImage || profile.cover || ''
   );
   const [avatarImage, setAvatarImage] = useState<string>(
-    saved.avatarImage || profile.avatar || ''
+    initialSaved.avatarImage || profile.avatar || ''
   );
-  const [isPublicAccount] = useState<boolean>(
-    typeof saved.isPublicAccount === 'boolean'
-      ? saved.isPublicAccount
+  const [isPublicAccount, setIsPublicAccount] = useState<boolean>(
+    typeof initialSaved.isPublicAccount === 'boolean'
+      ? initialSaved.isPublicAccount
       : typeof profile.isPublic === 'boolean'
         ? profile.isPublic
         : true
@@ -116,20 +194,22 @@ export default function ProfileTab() {
   // تعديل التفاصيل الشخصية
   const [editingDetails, setEditingDetails] = useState(false);
   const [bio, setBio] = useState<string>(
-    saved.bio || profile.bio || 'مطوّر ومحب للتكنولوجيا. أعيش لحظاتي بهدوء.'
+    initialSaved.bio || profile.bio || 'مطوّر ومحب للتكنولوجيا. أعيش لحظاتي بهدوء.'
   );
   const [city, setCity] = useState<string>(
-    saved.city || profile.city || profile.location || 'شندي'
+    initialSaved.city || profile.city || profile.location || 'شندي'
   );
-  const [hometown, setHometown] = useState<string>(saved.hometown || profile.hometown || 'شندي');
+  const [hometown, setHometown] = useState<string>(
+    initialSaved.hometown || profile.hometown || 'شندي'
+  );
   const [birthday, setBirthday] = useState<string>(
-    saved.birthday || profile.birthday || '٢٠ سبتمبر ٢٠٠٢'
+    initialSaved.birthday || profile.birthday || '٢٠ سبتمبر ٢٠٠٢'
   );
   const [education, setEducation] = useState<string>(
-    saved.education || profile.education || 'كلية التربية - معلمين'
+    initialSaved.education || profile.education || 'كلية التربية - معلمين'
   );
   const [interestsText, setInterestsText] = useState<string>(
-    saved.interestsText ||
+    initialSaved.interestsText ||
       (Array.isArray(profile.interests) && profile.interests.length > 0
         ? profile.interests.join('، ')
         : 'PUBG Mobile، Garena Free Fire')
@@ -137,16 +217,15 @@ export default function ProfileTab() {
 
   // أبرز القصص
   const [highlights, setHighlights] = useState<Array<{ id: string; title: string; image?: string }>>(
-    Array.isArray(saved.highlights) && saved.highlights.length > 0
-      ? saved.highlights
+    Array.isArray(initialSaved.highlights) && initialSaved.highlights.length > 0
+      ? initialSaved.highlights
       : Array.isArray(profile.highlights)
         ? profile.highlights
         : []
   );
 
-  // بناء المنشورات المحفوظة ودمج أي منشورات جديدة من الـ store دون حذف اليدوي
-  const buildInitialPosts = (): ActivityPostItem[] => {
-    const persistedList = Array.isArray(saved.posts) ? saved.posts : [];
+  const buildInitialPosts = (baseSaved: Partial<PersistedProfileData>): ActivityPostItem[] => {
+    const persistedList = Array.isArray(baseSaved.posts) ? baseSaved.posts : [];
     const existingIds = new Set(persistedList.map((p) => p.id));
 
     const extraFromStore: ActivityPostItem[] = storePosts
@@ -177,7 +256,8 @@ export default function ProfileTab() {
           authorName: displayName,
           authorHandle: displayHandle,
           authorAvatar:
-            saved.avatarImage || (typeof p.authorAvatar === 'string' ? p.authorAvatar : undefined),
+            baseSaved.avatarImage ||
+            (typeof p.authorAvatar === 'string' ? p.authorAvatar : undefined),
           headline,
           content: isAvatarUpdate || isCoverUpdate ? undefined : text || undefined,
           image: typeof img === 'string' ? img : undefined,
@@ -193,7 +273,10 @@ export default function ProfileTab() {
     return [...persistedList, ...extraFromStore];
   };
 
-  const [activityPosts, setActivityPosts] = useState<ActivityPostItem[]>(buildInitialPosts);
+  const [activityPosts, setActivityPosts] = useState<ActivityPostItem[]>(() =>
+    buildInitialPosts(initialSaved)
+  );
+  const [hydratedFromDB, setHydratedFromDB] = useState(false);
   const [openCommentsPostId, setOpenCommentsPostId] = useState<string | null>(null);
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
 
@@ -201,8 +284,45 @@ export default function ProfileTab() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const highlightInputRef = useRef<HTMLInputElement | null>(null);
 
+  // استعادة البيانات الكاملة من IndexedDB عند بدء التحميل
   useEffect(() => {
-    savePersistedProfile({
+    let active = true;
+    void loadFromIndexedDB().then((dbData) => {
+      if (!active) return;
+      if (dbData) {
+        if (dbData.coverImage) setCoverImage(dbData.coverImage);
+        if (dbData.avatarImage) setAvatarImage(dbData.avatarImage);
+        if (typeof dbData.bio === 'string') setBio(dbData.bio);
+        if (typeof dbData.city === 'string') setCity(dbData.city);
+        if (typeof dbData.hometown === 'string') setHometown(dbData.hometown);
+        if (typeof dbData.birthday === 'string') setBirthday(dbData.birthday);
+        if (typeof dbData.education === 'string') setEducation(dbData.education);
+        if (typeof dbData.interestsText === 'string') setInterestsText(dbData.interestsText);
+        if (typeof dbData.isPublicAccount === 'boolean') {
+          setIsPublicAccount(dbData.isPublicAccount);
+        }
+        if (Array.isArray(dbData.highlights) && dbData.highlights.length > 0) {
+          setHighlights(dbData.highlights);
+        }
+        if (Array.isArray(dbData.posts) && dbData.posts.length > 0) {
+          setActivityPosts((prev) => {
+            const dbIds = new Set(dbData.posts!.map((p) => p.id));
+            const brandNew = prev.filter((p) => !dbIds.has(p.id));
+            return [...brandNew, ...dbData.posts!];
+          });
+        }
+      }
+      setHydratedFromDB(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // حفظ مستمر مفتوح بدون قيود على عدد أو حجم الصور
+  useEffect(() => {
+    if (!hydratedFromDB) return;
+    saveLocalSnapshot({
       coverImage,
       avatarImage,
       bio,
@@ -216,6 +336,7 @@ export default function ProfileTab() {
       posts: activityPosts,
     });
   }, [
+    hydratedFromDB,
     coverImage,
     avatarImage,
     bio,
@@ -235,19 +356,16 @@ export default function ProfileTab() {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const handlePickImage = (
+  const handlePickImage = async (
     e: React.ChangeEvent<HTMLInputElement>,
     onLoaded: (dataUrl: string, fileName: string) => void
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        onLoaded(reader.result, file.name);
-      }
-    };
-    reader.readAsDataURL(file);
+    const rawDataUrl = await readRawFileAsDataUrl(file);
+    if (rawDataUrl) {
+      onLoaded(rawDataUrl, file.name);
+    }
     e.target.value = '';
   };
 
@@ -281,7 +399,7 @@ export default function ProfileTab() {
       store.updateProfile({ coverImage: dataUrl, cover: dataUrl });
     }
     pushActivityPost({
-      id: `cover-${Date.now()}`,
+      id: `cover-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       authorName: displayName,
       authorHandle: displayHandle,
       authorAvatar: avatarImage || undefined,
@@ -298,7 +416,7 @@ export default function ProfileTab() {
       store.updateProfile({ avatar: dataUrl });
     }
     pushActivityPost({
-      id: `avatar-${Date.now()}`,
+      id: `avatar-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       authorName: displayName,
       authorHandle: displayHandle,
       authorAvatar: dataUrl,
@@ -314,7 +432,7 @@ export default function ProfileTab() {
     setHighlights((prev) => [
       ...prev,
       {
-        id: `hl-${Date.now()}`,
+        id: `hl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         title: cleanTitle,
         image: dataUrl,
       },
@@ -358,7 +476,7 @@ export default function ProfileTab() {
     if (!text) return;
 
     const newComment: PostCommentItem = {
-      id: `cmt-${Date.now()}`,
+      id: `cmt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       author: displayName,
       text,
       createdAt: 'الآن',
@@ -410,7 +528,7 @@ export default function ProfileTab() {
 
   return (
     <div dir="rtl" className="mx-auto max-w-2xl space-y-4 pb-8 text-slate-100">
-      {/* مدخلات معرض الصور المخفية */}
+      {/* مدخلات معرض الصور المخفية (بدون أي قيود على الملفات) */}
       <input
         ref={coverInputRef}
         type="file"
@@ -852,7 +970,7 @@ export default function ProfileTab() {
         </section>
       )}
 
-      {/* منشورات الملف الشخصي مع أزرار أحببته وتعليق ومشاركة وحفظ دائم */}
+      {/* منشورات الملف الشخصي */}
       {activeSubTab === 'all' && (
         <section className="space-y-3">
           <h2 className="px-1 text-sm font-black text-white">المنشورات</h2>
