@@ -16,6 +16,28 @@ interface SavedAccount {
 }
 
 const SAVED_ACCOUNTS_KEY = 'wasl_saved_accounts_v1';
+const LAST_PASSWORD_KEY = 'wasl_last_session_pass_v1';
+
+function readCachedPassword(): string | undefined {
+  try {
+    const win = window as unknown as { __waslLastPassword?: string };
+    if (win.__waslLastPassword) return win.__waslLastPassword;
+    const raw = window.sessionStorage?.getItem(LAST_PASSWORD_KEY);
+    return raw || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function clearCachedPassword() {
+  try {
+    const win = window as unknown as { __waslLastPassword?: string };
+    delete win.__waslLastPassword;
+    window.sessionStorage?.removeItem(LAST_PASSWORD_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 function saveCurrentAccountBeforeLogout(acc: SavedAccount) {
   try {
@@ -38,7 +60,6 @@ export default function ProfileTab() {
   const [bioDraft, setBioDraft] = useState(profile.bio ?? '');
   const [loggingOut, setLoggingOut] = useState(false);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
-  const [savePassword, setSavePassword] = useState('');
   const [metaName, setMetaName] = useState('');
   const [metaPhone, setMetaPhone] = useState('');
   const [metaEmail, setMetaEmail] = useState('');
@@ -87,6 +108,7 @@ export default function ProfileTab() {
       const phoneFromEmail = isPhoneLocal ? metaEmail.replace('@wasl-phone.local', '') : '';
       const identifier = (currentPhone || phoneFromEmail || metaEmail || currentUsername).trim();
       const mode: AuthMode = currentPhone || phoneFromEmail || !metaEmail.includes('@') ? 'phone' : 'email';
+      const cachedPass = readCachedPassword();
 
       saveCurrentAccountBeforeLogout({
         id: userId || identifier || currentUsername,
@@ -95,11 +117,11 @@ export default function ProfileTab() {
         mode,
         username: currentUsername,
         avatar: profile.avatar || undefined,
-        ...(savePassword.trim() ? { password: savePassword.trim() } : {}),
+        ...(cachedPass ? { password: cachedPass } : {}),
       });
     }
+    clearCachedPassword();
     await supabase.auth.signOut();
-    setSavePassword('');
     setConfirmLogoutOpen(false);
     setLoggingOut(false);
   };
@@ -245,15 +267,6 @@ export default function ProfileTab() {
                 لو اخترت «نعم» هيظهر حساب ({currentName}) في قائمة الحسابات ويفتح طوالي بدون كلمة سر.
               </p>
             </div>
-
-            <input
-              type="password"
-              dir="ltr"
-              value={savePassword}
-              onChange={(e) => setSavePassword(e.target.value)}
-              placeholder="اكتب كلمة السر هنا لو حابب يحفظها"
-              className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-white placeholder:text-slate-500"
-            />
 
             <div className="grid grid-cols-3 gap-2 pt-1">
               <button
