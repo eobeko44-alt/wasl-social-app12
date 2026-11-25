@@ -1,10 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/store/useAppStore';
 
 type AuthMode = 'phone' | 'email';
 type Gender = 'male' | 'female' | '';
 
+interface SavedAccount {
+  id: string;
+  name: string;
+  identifier: string;
+  mode: AuthMode;
+  username: string;
+}
+
+const SAVED_ACCOUNTS_KEY = 'wasl_saved_accounts_v1';
 const toEmail = (p: string) => `${p.replace(/\D/g, '')}@wasl-phone.local`;
 
 function buildUsername(name: string, digits: string): string {
@@ -14,9 +23,28 @@ function buildUsername(name: string, digits: string): string {
   return '@wasl_user';
 }
 
+function loadSavedAccounts(): SavedAccount[] {
+  try {
+    const raw = localStorage.getItem(SAVED_ACCOUNTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistSavedAccounts(list: SavedAccount[]) {
+  try {
+    localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(list.slice(0, 6)));
+  } catch {
+    // تجاهل أخطاء التخزين المحلي
+  }
+}
+
 export default function AuthGate() {
   const { updateProfile } = useAppStore();
-  const [isSignUp, setIsSignUp] = useState(true);
+  const [isSignUp, setIsSignUp] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [mode, setMode] = useState<AuthMode>('phone');
 
@@ -27,9 +55,83 @@ export default function AuthGate() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
+  const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>([]);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSavedAccounts(loadSavedAccounts());
+  }, []);
+
+  const saveAccountToList = (acc: SavedAccount) => {
+    setSavedAccounts((prev) => {
+      const filtered = prev.filter(
+        (item) => item.id !== acc.id && item.identifier !== acc.identifier
+      );
+      const next = [acc, ...filtered];
+      persistSavedAccounts(next);
+      return next;
+    });
+  };
+
+  const removeSavedAccount = (id: string) => {
+    setSavedAccounts((prev) => {
+      const next = prev.filter((item) => item.id !== id);
+      persistSavedAccounts(next);
+      return next;
+    });
+  };
+
+  const handleSelectSavedAccount = (acc: SavedAccount) => {
+    setErr(null);
+    setMsg(null);
+    setForgotOpen(false);
+    setIsSignUp(false);
+    setMode(acc.mode);
+    if (acc.mode === 'phone') {
+      setPhone(acc.identifier);
+    } else {
+      setEmail(acc.identifier);
+    }
+    if (acc.name) setName(acc.name);
+  };
+
+  const handleForgotPassword = async () => {
+    setErr(null);
+    setMsg(null);
+
+    if (mode === 'phone') {
+      const digits = phone.replace(/\D/g, '');
+      if (digits.length < 7) {
+        setErr('اكتب رقم الهاتف أولاً لمعرفة حالة الحساب.');
+        return;
+      }
+      setErr(
+        'الحسابات المسجلة برقم الهاتف لا تملك بريداً إلكترونياً لاستقبال رابط الاستعادة. يمكنك تحديث كلمة المرور من لوحة Supabase أو تسجيل الدخول بحساب آخر.'
+      );
+      return;
+    }
+
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setErr('اكتب بريدك الإلكتروني أولاً لإرسال رابط استعادة كلمة السر.');
+      return;
+    }
+
+    setResetLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+    setResetLoading(false);
+
+    if (error) {
+      setErr(error.message || 'تعذر إرسال رابط الاستعادة.');
+    } else {
+      setMsg('تم إرسال رابط إعادة تعيين كلمة السر إلى بريدك الإلكتروني.');
+    }
+  };
 
   const goNextStep = () => {
     setErr(null);
@@ -81,6 +183,7 @@ export default function AuthGate() {
     const target = mode === 'phone' ? toEmail(digits) : email.trim();
     const handle = buildUsername(cleanName || 'user', digits);
     const cleanPhone = mode === 'phone' ? phone.trim() : '';
+    const cleanEmail = mode === 'email' ? email.trim() : '';
 
     if (isSignUp) {
       const { data, error } = await supabase.auth.signUp({
@@ -105,6 +208,13 @@ export default function AuthGate() {
           username: handle,
           ...(cleanPhone ? { phone: cleanPhone } : {}),
         });
+        saveAccountToList({
+          id: data.user?.id || target,
+          name: cleanName,
+          identifier: mode === 'phone' ? cleanPhone : cleanEmail,
+          mode,
+          username: handle,
+        });
         setMsg(data.session ? 'تم إنشاء الحساب وتسجيل الدخول.' : 'تم إنشاء الحساب بنجاح.');
       }
     } else {
@@ -113,18 +223,26 @@ export default function AuthGate() {
         setErr('البيانات غير صحيحة.');
       } else {
         const meta = data.user?.user_metadata;
-        const patch: { name?: string; phone?: string; username?: string } = {};
-        if (meta?.full_name) {
-          const full = String(meta.full_name).trim();
-          patch.name = full;
-          patch.username = buildUsername(full, digits);
+        const resolvedName = meta?.full_name ? String(meta.full_name).trim() : cleanName || 'مستخدم وِصل';
+        const resolvedPhone = meta?.phone_number ? String(meta.phone_number).trim() : cleanPhone;
+        const resolvedHandle = buildUsername(resolvedName, digits);
+
+        const patch: { name?: string; phone?: string; username?: string } = {
+          name: resolvedName,
+          username: resolvedHandle,
+        };
+        if (resolvedPhone) {
+          patch.phone = resolvedPhone;
         }
-        if (meta?.phone_number) {
-          patch.phone = String(meta.phone_number).trim();
-        }
-        if (Object.keys(patch).length > 0) {
-          updateProfile(patch);
-        }
+        updateProfile(patch);
+
+        saveAccountToList({
+          id: data.user?.id || target,
+          name: resolvedName,
+          identifier: mode === 'phone' ? resolvedPhone || cleanPhone : cleanEmail,
+          mode,
+          username: resolvedHandle,
+        });
       }
     }
     setLoading(false);
@@ -139,6 +257,47 @@ export default function AuthGate() {
             {isSignUp ? `إنشاء حساب جديد — خطوة ${step} من 4` : 'تسجيل الدخول إلى حسابك'}
           </p>
         </div>
+
+        {!isSignUp && savedAccounts.length > 0 && (
+          <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-400">الحسابات المحفوظة على الجهاز</span>
+              <span className="text-[11px] text-cyan-400">{savedAccounts.length}</span>
+            </div>
+            <div className="space-y-1.5 max-h-40 overflow-y-auto">
+              {savedAccounts.map((acc) => (
+                <div
+                  key={acc.id}
+                  className="flex items-center justify-between gap-2 rounded-xl border border-slate-800/90 bg-slate-900 px-3 py-2"
+                >
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSavedAccount(acc)}
+                    className="flex flex-1 items-center gap-2.5 text-right"
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 text-xs font-black text-cyan-300 border border-cyan-500/20">
+                      {(acc.name || 'و').slice(0, 1)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-bold text-white">{acc.name}</p>
+                      <p className="truncate text-[11px] text-slate-400" dir="ltr">
+                        {acc.identifier}
+                      </p>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeSavedAccount(acc.id)}
+                    title="إزالة الحساب"
+                    className="rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-rose-950/40 hover:text-rose-400"
+                  >
+                    إزالة
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {isSignUp && (
           <div className="grid grid-cols-4 gap-1.5">
@@ -292,6 +451,36 @@ export default function AuthGate() {
                 placeholder="كلمة المرور"
                 className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
               />
+
+              {!isSignUp && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setForgotOpen((v) => !v)}
+                    className="text-xs text-purple-300 hover:text-purple-200"
+                  >
+                    نسيت كلمة السر؟
+                  </button>
+                </div>
+              )}
+
+              {!isSignUp && forgotOpen && (
+                <div className="space-y-2 rounded-xl border border-purple-500/25 bg-slate-950/80 p-3">
+                  <p className="text-[11px] leading-relaxed text-slate-300">
+                    {mode === 'email'
+                      ? 'سيتم إرسال رابط إعادة تعيين كلمة السر إلى البريد المكتوب أعلاه.'
+                      : 'إذا كنت مسجلاً بالبريد، بدّل إلى «بالبريد» واكتب بريدك لإرسال رابط الاستعادة.'}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={resetLoading}
+                    onClick={handleForgotPassword}
+                    className="w-full rounded-lg border border-purple-500/40 bg-purple-600/20 py-2 text-xs font-bold text-purple-200 hover:bg-purple-600/30 disabled:opacity-50"
+                  >
+                    {resetLoading ? 'جاري الإرسال...' : 'إرسال رابط استعادة كلمة السر'}
+                  </button>
+                </div>
+              )}
             </>
           )}
 
@@ -333,6 +522,7 @@ export default function AuthGate() {
           onClick={() => {
             setErr(null);
             setMsg(null);
+            setForgotOpen(false);
             setStep(1);
             setIsSignUp(!isSignUp);
           }}
