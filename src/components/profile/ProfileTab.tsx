@@ -39,26 +39,26 @@ export default function ProfileTab() {
           <div className="mt-2 grid w-full grid-cols-3 gap-3">
             <Stat label="منشورات" value={posts.filter((p) => p.author.id === 'me').length} />
             <Stat label="جهات اتصال" value={contacts.length} />
-            <Stat label="أصدقاء" value="{contacts.length}"/>
+            <Stat label="أصدقاء" value={contacts.length} />
           </div>
 
           <div className="mt-3 grid w-full gap-2 text-sm">
-            <InfoRow icon={<Phone className="text-purple-400" size="{16}"/>} label="رقم الهاتف" value={profile.phone} ltr />
-            <InfoRow icon={<AtSign className="text-cyan-400" size="{16}"/>} label="اسم المستخدم" value={profile.username} ltr />
+            <InfoRow icon={<Phone size={16} className="text-purple-400" />} label="رقم الهاتف" value={profile.phone} ltr />
+            <InfoRow icon={<AtSign size={16} className="text-cyan-400" />} label="اسم المستخدم" value={profile.username} ltr />
           </div>
         </div>
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
         <div className="mb-4 flex items-center gap-2">
-          <ShieldCheck className="text-emerald-400" size="{18}"/>
+          <ShieldCheck size={18} className="text-emerald-400" />
           <h3 className="text-base font-bold text-white">الخصوصية</h3>
         </div>
 
         <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-800 bg-slate-800/40 p-4">
           <div className="flex items-start gap-3">
             <span className={`mt-0.5 rounded-full p-2 ${profile.isPublic ? 'bg-cyan-500/15 text-cyan-400' : 'bg-purple-500/15 text-purple-400'}`}>
-              {profile.isPublic ? <Globe size="{18}"/> : <Lock size="{18}"/>}
+              {profile.isPublic ? <Globe size={18} /> : <Lock size={18} />}
             </span>
             <div>
               <p className="text-sm font-bold text-white">
@@ -92,7 +92,7 @@ export default function ProfileTab() {
       <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Sparkles className="text-purple-400" size="{17}"/>
+            <Sparkles size={17} className="text-purple-400" />
             <h3 className="text-base font-bold text-white">نبذة عني</h3>
           </div>
           {!editingBio && (
@@ -103,7 +103,7 @@ export default function ProfileTab() {
               }}
               className="flex items-center gap-1.5 rounded-full bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-300 transition hover:bg-slate-700 hover:text-white"
             >
-              <Pencil size="{13}"/>
+              <Pencil size={13} />
               تعديل
             </button>
           )}
@@ -131,7 +131,7 @@ export default function ProfileTab() {
                   onClick={saveBio}
                   className="flex items-center gap-1.5 rounded-full bg-gradient-to-l from-cyan-600 to-purple-600 px-4 py-1.5 text-xs font-bold text-white transition hover:brightness-110 active:scale-95"
                 >
-                  <Check size="{14}"/>
+                  <Check size={14} />
                   حفظ
                 </button>
               </div>
@@ -149,7 +149,7 @@ export default function ProfileTab() {
           disabled={loggingOut}
           className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-950/30 py-3 text-sm font-bold text-rose-400 transition hover:bg-rose-950/50 disabled:opacity-50"
         >
-          <LogOut size="{16}"/>
+          <LogOut size={16} />
           {loggingOut ? 'جاري تسجيل الخروج...' : 'تسجيل الخروج'}
         </button>
       </section>
