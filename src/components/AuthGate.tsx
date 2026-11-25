@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAppStore } from '@/store/useAppStore';
 
 type AuthMode = 'phone' | 'email';
-
 const toEmail = (p: string) => `${p.replace(/\D/g, '')}@wasl-phone.local`;
 
 export default function AuthGate() {
+  const { updateProfile } = useAppStore();
   const [isSignUp, setIsSignUp] = useState(true);
   const [mode, setMode] = useState<AuthMode>('phone');
+  const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -26,18 +28,31 @@ export default function AuthGate() {
       setLoading(false);
       return;
     }
+    const cleanName = name.trim();
+    if (isSignUp && cleanName.length < 2) {
+      setErr('اكتب اسمك عشان يظهر في ملفك.');
+      setLoading(false);
+      return;
+    }
     const target = mode === 'phone' ? toEmail(digits) : email.trim();
     if (isSignUp) {
+      const handle = cleanName.toLowerCase().replace(/[^a-z0-9_]/g, '') || 'user';
       const { data, error } = await supabase.auth.signUp({
         email: target,
         password,
-        options: { data: { login_method: mode, phone_number: mode === 'phone' ? phone.trim() : null } },
+        options: { data: { full_name: cleanName, login_method: mode, phone_number: mode === 'phone' ? phone.trim() : null } },
       });
       if (error) setErr(error.message);
-      else setMsg(data.session ? 'تم إنشاء الحساب وتسجيل الدخول.' : 'تم إنشاء الحساب بنجاح.');
+      else {
+        updateProfile({ name: cleanName, username: `@${handle}`, ...(mode === 'phone' ? { phone: phone.trim() } : {}) });
+        setMsg(data.session ? 'تم إنشاء الحساب وتسجيل الدخول.' : 'تم إنشاء الحساب بنجاح.');
+      }
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email: target, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email: target, password });
       if (error) setErr('البيانات غير صحيحة.');
+      else if (data.user?.user_metadata?.full_name) {
+        updateProfile({ name: String(data.user.user_metadata.full_name) });
+      }
     }
     setLoading(false);
   };
@@ -51,6 +66,9 @@ export default function AuthGate() {
           <button type="button" onClick={() => setMode('email')} className={`py-2 rounded-lg text-xs font-bold ${mode === 'email' ? 'bg-gradient-to-l from-cyan-600 to-purple-600 text-white' : 'text-slate-400'}`}>بالبريد</button>
         </div>
         <form onSubmit={onSubmit} className="space-y-3">
+          {isSignUp && (
+            <input type="text" required value={name} onChange={(e) => setName(e.target.value)} placeholder="الاسم الكامل" className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white" />
+          )}
           {mode === 'phone' ? (
             <input type="tel" dir="ltr" required value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="09xxxxxxxx" className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white" />
           ) : (
