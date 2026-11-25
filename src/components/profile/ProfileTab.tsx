@@ -12,6 +12,7 @@ interface SavedAccount {
   mode: AuthMode;
   username: string;
   avatar?: string;
+  password?: string;
 }
 
 const SAVED_ACCOUNTS_KEY = 'wasl_saved_accounts_v1';
@@ -37,6 +38,7 @@ export default function ProfileTab() {
   const [bioDraft, setBioDraft] = useState(profile.bio ?? '');
   const [loggingOut, setLoggingOut] = useState(false);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
+  const [savePassword, setSavePassword] = useState('');
   const [metaName, setMetaName] = useState('');
   const [metaPhone, setMetaPhone] = useState('');
   const [metaEmail, setMetaEmail] = useState('');
@@ -93,9 +95,11 @@ export default function ProfileTab() {
         mode,
         username: currentUsername,
         avatar: profile.avatar || undefined,
+        ...(savePassword.trim() ? { password: savePassword.trim() } : {}),
       });
     }
     await supabase.auth.signOut();
+    setSavePassword('');
     setConfirmLogoutOpen(false);
     setLoggingOut(false);
   };
@@ -239,6 +243,14 @@ export default function ProfileTab() {
             <p className="text-[11px] text-slate-400">
               يمكن حفظ بيانات حسابك ({currentName}) ليظهر في شاشة الدخول السريع.
             </p>
+            <input
+              type="password"
+              dir="ltr"
+              value={savePassword}
+              onChange={(e) => setSavePassword(e.target.value)}
+              placeholder="كلمة السر للدخول السريع (اختياري)"
+              className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-white placeholder:text-slate-500"
+            />
             <div className="grid grid-cols-1 gap-2 pt-1">
               <button
                 type="button"
