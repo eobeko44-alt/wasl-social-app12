@@ -3,25 +3,62 @@ import { AtSign, Check, Globe, Lock, LogOut, Pencil, Phone, ShieldCheck, Sparkle
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/store/useAppStore';
 
+type AuthMode = 'phone' | 'email';
+
+interface SavedAccount {
+  id: string;
+  name: string;
+  identifier: string;
+  mode: AuthMode;
+  username: string;
+  avatar?: string;
+}
+
+const SAVED_ACCOUNTS_KEY = 'wasl_saved_accounts_v1';
+
+function saveCurrentAccountBeforeLogout(acc: SavedAccount) {
+  try {
+    const raw = window.localStorage.getItem(SAVED_ACCOUNTS_KEY);
+    const existing: SavedAccount[] = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(existing) ? existing : [];
+    const filtered = list.filter(
+      (item) => item.id !== acc.id && item.identifier !== acc.identifier
+    );
+    const next = [acc, ...filtered].slice(0, 8);
+    window.localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export default function ProfileTab() {
   const { profile, updateProfile, posts, contacts } = useAppStore();
   const [editingBio, setEditingBio] = useState(false);
   const [bioDraft, setBioDraft] = useState(profile.bio ?? '');
   const [loggingOut, setLoggingOut] = useState(false);
+  const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
   const [metaName, setMetaName] = useState('');
   const [metaPhone, setMetaPhone] = useState('');
+  const [metaEmail, setMetaEmail] = useState('');
+  const [userId, setUserId] = useState('');
 
   useEffect(() => {
     let active = true;
     supabase.auth.getUser().then(({ data }) => {
       if (!active) return;
-      const m = data.user?.user_metadata;
+      const u = data.user;
+      if (u?.id) setUserId(u.id);
+      if (u?.email) setMetaEmail(String(u.email).trim());
+      const m = u?.user_metadata;
       if (m?.full_name) setMetaName(String(m.full_name).trim());
       if (m?.phone_number) setMetaPhone(String(m.phone_number).trim());
     });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
-      const m = session?.user?.user_metadata;
+      const u = session?.user;
+      if (u?.id) setUserId(u.id);
+      if (u?.email) setMetaEmail(String(u.email).trim());
+      const m = u?.user_metadata;
       if (m?.full_name) setMetaName(String(m.full_name).trim());
       if (m?.phone_number) setMetaPhone(String(m.phone_number).trim());
     });
@@ -41,9 +78,25 @@ export default function ProfileTab() {
     setEditingBio(false);
   };
 
-  const handleLogout = async () => {
+  const performLogout = async (shouldSaveAccount: boolean) => {
     setLoggingOut(true);
+    if (shouldSaveAccount) {
+      const isPhoneLocal = metaEmail.endsWith('@wasl-phone.local');
+      const phoneFromEmail = isPhoneLocal ? metaEmail.replace('@wasl-phone.local', '') : '';
+      const identifier = (currentPhone || phoneFromEmail || metaEmail || currentUsername).trim();
+      const mode: AuthMode = currentPhone || phoneFromEmail || !metaEmail.includes('@') ? 'phone' : 'email';
+
+      saveCurrentAccountBeforeLogout({
+        id: userId || identifier || currentUsername,
+        name: currentName,
+        identifier,
+        mode,
+        username: currentUsername,
+        avatar: profile.avatar || undefined,
+      });
+    }
     await supabase.auth.signOut();
+    setConfirmLogoutOpen(false);
     setLoggingOut(false);
   };
 
@@ -70,8 +123,7 @@ export default function ProfileTab() {
           </div>
 
           <div className="mt-3 grid w-full gap-2 text-sm">
-            <InfoRow icon={<Phone size={16} className="text-purple-400"
- size={16} />} label="رقم الهاتف" value={currentPhone} ltr />
+            <InfoRow icon={<Phone size={16} className="text-purple-400" />} label="رقم الهاتف" value={currentPhone} ltr />
             <InfoRow icon={<AtSign className="text-cyan-400" size={16} />} label="اسم المستخدم" value={currentUsername} ltr />
           </div>
         </div>
@@ -157,8 +209,7 @@ export default function ProfileTab() {
                 </button>
                 <button
                   onClick={saveBio}
-                  className="flex items-center gap-1.5 rounded-full bg-gradient-to-l from-cyan-600 to-purple
--600 px-4 py-1.5 text-xs font-bold text-white transition hover:brightness-110 active:scale-95"
+                  className="flex items-center gap-1.5 rounded-full bg-gradient-to-l from-cyan-600 to-purple-600 px-4 py-1.5 text-xs font-bold text-white transition hover:brightness-110 active:scale-95"
                 >
                   <Check size={14} />
                   حفظ
@@ -171,16 +222,53 @@ export default function ProfileTab() {
         )}
       </section>
 
-      <section className="rounded-2xl border border-rose-500/20 bg-slate-900/70 p-4">
-        <button
-          type="button"
-          onClick={handleLogout}
-          disabled={loggingOut}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-950/30 py-3 text-sm font-bold text-rose-400 transition hover:bg-rose-950/50 disabled:opacity-50"
-        >
-          <LogOut size={16} />
-          {loggingOut ? 'جاري تسجيل الخروج...' : 'تسجيل الخروج'}
-        </button>
+      <section className="rounded-2xl border border-rose-500/20 bg-slate-900/70 p-4 space-y-3">
+        {!confirmLogoutOpen ? (
+          <button
+            type="button"
+            onClick={() => setConfirmLogoutOpen(true)}
+            disabled={loggingOut}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-950/30 py-3 text-sm font-bold text-rose-400 transition hover:bg-rose-950/50 disabled:opacity-50"
+          >
+            <LogOut size={16} />
+            تسجيل الخروج
+          </button>
+        ) : (
+          <div className="space-y-2.5 rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
+            <p className="text-xs font-bold text-white">تسجيل الخروج وحفظ الحساب؟</p>
+            <p className="text-[11px] text-slate-400">
+              يمكن حفظ بيانات حسابك ({currentName}) ليظهر في شاشة الدخول السريع.
+            </p>
+            <div className="grid grid-cols-1 gap-2 pt-1">
+              <button
+                type="button"
+                disabled={loggingOut}
+                onClick={() => performLogout(true)}
+                className="w-full rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2.5 text-xs font-bold text-white transition hover:brightness-110 disabled:opacity-50"
+              >
+                {loggingOut ? 'جاري التنفيذ...' : 'تسجيل خروج وحفظ الحساب'}
+              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={loggingOut}
+                  onClick={() => performLogout(false)}
+                  className="rounded-xl border border-rose-500/30 bg-rose-950/30 py-2 text-xs font-bold text-rose-300 hover:bg-rose-950/50 disabled:opacity-50"
+                >
+                  خروج بدون حفظ
+                </button>
+                <button
+                  type="button"
+                  disabled={loggingOut}
+                  onClick={() => setConfirmLogoutOpen(false)}
+                  className="rounded-xl border border-slate-700 bg-slate-900 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );
