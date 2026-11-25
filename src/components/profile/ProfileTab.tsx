@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Camera,
   MapPin,
@@ -16,11 +16,23 @@ import {
   Image as ImageIcon,
   Sparkles,
   LogOut,
+  Heart,
+  MessageCircle,
+  Share2,
+  Trash2,
+  Send,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { supabase } from '@/lib/supabase';
 
 type ProfileSectionTab = 'all' | 'photos' | 'about';
+
+interface PostCommentItem {
+  id: string;
+  author: string;
+  text: string;
+  createdAt: string;
+}
 
 interface ActivityPostItem {
   id: string;
@@ -32,6 +44,44 @@ interface ActivityPostItem {
   image?: string;
   createdAt: string;
   kind: 'avatar' | 'cover' | 'photo' | 'post';
+  liked?: boolean;
+  likesCount?: number;
+  sharesCount?: number;
+  comments?: PostCommentItem[];
+}
+
+interface PersistedProfileData {
+  coverImage: string;
+  avatarImage: string;
+  bio: string;
+  city: string;
+  hometown: string;
+  birthday: string;
+  education: string;
+  interestsText: string;
+  isPublicAccount: boolean;
+  highlights: Array<{ id: string; title: string; image?: string }>;
+  posts: ActivityPostItem[];
+}
+
+const STORAGE_KEY = 'wasl_persistent_profile_v1';
+
+function loadPersistedProfile(): Partial<PersistedProfileData> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as Partial<PersistedProfileData>;
+  } catch {
+    return {};
+  }
+}
+
+function savePersistedProfile(data: PersistedProfileData) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch {
+    // تجاهل خطأ امتلاء التخزين إن حدث
+  }
 }
 
 export default function ProfileTab() {
@@ -44,79 +94,147 @@ export default function ProfileTab() {
       ? store.contacts
       : [];
 
+  const saved = loadPersistedProfile();
+
   const displayName =
-    profile.name && profile.name !== 'أنت' ? String(profile.name) : 'abobaker';
-  const rawHandle = profile.username || '@abobaker';
+    profile.name && profile.name !== 'أنت' ? String(profile.name) : 'abobaker096605';
+  const rawHandle = profile.username || '@abobaker096605';
   const displayHandle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
   const displayPhone = profile.phone || profile.phone_number || '+966 5X XXX XXXX';
 
   const [activeSubTab, setActiveSubTab] = useState<ProfileSectionTab>('all');
-  const [coverImage, setCoverImage] = useState<string>(profile.coverImage || profile.cover || '');
-  const [avatarImage, setAvatarImage] = useState<string>(profile.avatar || '');
-  const [localActivityPosts, setLocalActivityPosts] = useState<ActivityPostItem[]>([]);
+  const [coverImage, setCoverImage] = useState<string>(
+    saved.coverImage || profile.coverImage || profile.cover || ''
+  );
+  const [avatarImage, setAvatarImage] = useState<string>(
+    saved.avatarImage || profile.avatar || ''
+  );
   const [isPublicAccount, setIsPublicAccount] = useState<boolean>(
-    typeof profile.isPublic === 'boolean' ? profile.isPublic : true
+    typeof saved.isPublicAccount === 'boolean'
+      ? saved.isPublicAccount
+      : typeof profile.isPublic === 'boolean'
+        ? profile.isPublic
+        : true
   );
 
   // تعديل التفاصيل الشخصية
   const [editingDetails, setEditingDetails] = useState(false);
   const [bio, setBio] = useState<string>(
-    profile.bio || 'مطوّر ومحب للتكنولوجيا. أعيش لحظاتي بهدوء.'
+    saved.bio || profile.bio || 'مطوّر ومحب للتكنولوجيا. أعيش لحظاتي بهدوء.'
   );
-  const [city, setCity] = useState<string>(profile.city || profile.location || 'شندي');
-  const [hometown, setHometown] = useState<string>(profile.hometown || 'شندي');
-  const [birthday, setBirthday] = useState<string>(profile.birthday || '٢٠ سبتمبر ٢٠٠٢');
-  const [education, setEducation] = useState<string>(profile.education || 'كلية التربية - معلمين');
+  const [city, setCity] = useState<string>(
+    saved.city || profile.city || profile.location || 'شندي'
+  );
+  const [hometown, setHometown] = useState<string>(saved.hometown || profile.hometown || 'شندي');
+  const [birthday, setBirthday] = useState<string>(
+    saved.birthday || profile.birthday || '٢٠ سبتمبر ٢٠٠٢'
+  );
+  const [education, setEducation] = useState<string>(
+    saved.education || profile.education || 'كلية التربية - معلمين'
+  );
   const [interestsText, setInterestsText] = useState<string>(
-    Array.isArray(profile.interests) && profile.interests.length > 0
-      ? profile.interests.join('، ')
-      : 'PUBG Mobile، Garena Free Fire'
+    saved.interestsText ||
+      (Array.isArray(profile.interests) && profile.interests.length > 0
+        ? profile.interests.join('، ')
+        : 'PUBG Mobile، Garena Free Fire')
   );
 
   // أبرز القصص
   const [highlights, setHighlights] = useState<Array<{ id: string; title: string; image?: string }>>(
-    Array.isArray(profile.highlights) ? profile.highlights : []
+    Array.isArray(saved.highlights) && saved.highlights.length > 0
+      ? saved.highlights
+      : Array.isArray(profile.highlights)
+        ? profile.highlights
+        : []
   );
+
+  // بناء المنشورات المحفوظة ودمج أي منشورات جديدة من الـ store دون حذف اليدوي
+  const buildInitialPosts = (): ActivityPostItem[] => {
+    const persistedList = Array.isArray(saved.posts) ? saved.posts : [];
+    const existingIds = new Set(persistedList.map((p) => p.id));
+
+    const extraFromStore: ActivityPostItem[] = storePosts
+      .filter((p) => !existingIds.has(String(p.id || '')))
+      .map((p, idx) => {
+        const img = p.image || p.imageUrl || p.photo;
+        const text = p.content ? String(p.content) : '';
+        const isAvatarUpdate =
+          text.includes('صورة ملفه الشخصي') || text.includes('صورة الملف الشخصي');
+        const isCoverUpdate = text.includes('صورة الغلاف');
+
+        let headline = `نشر ${displayName}`;
+        let kind: ActivityPostItem['kind'] = 'post';
+
+        if (isAvatarUpdate) {
+          headline = `قام ${displayName} بتحديث صورة ملفه الشخصي`;
+          kind = 'avatar';
+        } else if (isCoverUpdate) {
+          headline = `قام ${displayName} بتحديث صورة الغلاف`;
+          kind = 'cover';
+        } else if (img) {
+          headline = `نشر ${displayName} صورة`;
+          kind = 'photo';
+        }
+
+        return {
+          id: String(p.id || `store-post-${idx}`),
+          authorName: displayName,
+          authorHandle: displayHandle,
+          authorAvatar:
+            saved.avatarImage || (typeof p.authorAvatar === 'string' ? p.authorAvatar : undefined),
+          headline,
+          content: isAvatarUpdate || isCoverUpdate ? undefined : text || undefined,
+          image: typeof img === 'string' ? img : undefined,
+          createdAt: String(p.createdAt || 'الآن'),
+          kind,
+          liked: false,
+          likesCount: 0,
+          sharesCount: 0,
+          comments: [],
+        };
+      });
+
+    return [...persistedList, ...extraFromStore];
+  };
+
+  const [activityPosts, setActivityPosts] = useState<ActivityPostItem[]>(buildInitialPosts);
+  const [openCommentsPostId, setOpenCommentsPostId] = useState<string | null>(null);
+  const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
 
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const highlightInputRef = useRef<HTMLInputElement | null>(null);
 
-  const normalizedStorePosts: ActivityPostItem[] = storePosts.map((p, idx) => {
-    const img = p.image || p.imageUrl || p.photo;
-    const text = p.content ? String(p.content) : '';
-    const isAvatarUpdate = text.includes('صورة ملفه الشخصي') || text.includes('صورة الملف الشخصي');
-    const isCoverUpdate = text.includes('صورة الغلاف');
+  // حفظ دائم لأي تعديل أو صورة أو منشور
+  useEffect(() => {
+    savePersistedProfile({
+      coverImage,
+      avatarImage,
+      bio,
+      city,
+      hometown,
+      birthday,
+      education,
+      interestsText,
+      isPublicAccount,
+      highlights,
+      posts: activityPosts,
+    });
+  }, [
+    coverImage,
+    avatarImage,
+    bio,
+    city,
+    hometown,
+    birthday,
+    education,
+    interestsText,
+    isPublicAccount,
+    highlights,
+    activityPosts,
+  ]);
 
-    let headline = `نشر ${displayName}`;
-    let kind: ActivityPostItem['kind'] = 'post';
-
-    if (isAvatarUpdate) {
-      headline = `قام ${displayName} بتحديث صورة ملفه الشخصي`;
-      kind = 'avatar';
-    } else if (isCoverUpdate) {
-      headline = `قام ${displayName} بتحديث صورة الغلاف`;
-      kind = 'cover';
-    } else if (img) {
-      headline = `نشر ${displayName} صورة`;
-      kind = 'photo';
-    }
-
-    return {
-      id: String(p.id || `store-post-${idx}`),
-      authorName: displayName,
-      authorHandle: displayHandle,
-      authorAvatar: avatarImage || (typeof p.authorAvatar === 'string' ? p.authorAvatar : undefined),
-      headline,
-      content: isAvatarUpdate || isCoverUpdate ? undefined : text || undefined,
-      image: typeof img === 'string' ? img : undefined,
-      createdAt: String(p.createdAt || 'الآن'),
-      kind,
-    };
-  });
-
-  const combinedPosts: ActivityPostItem[] = [...localActivityPosts, ...normalizedStorePosts];
-  const photoPosts = combinedPosts.filter((p) => Boolean(p.image));
+  const photoPosts = activityPosts.filter((p) => Boolean(p.image));
   const interestsList = interestsText
     .split(/[,،\n]+/)
     .map((s) => s.trim())
@@ -139,7 +257,16 @@ export default function ProfileTab() {
   };
 
   const pushActivityPost = (item: ActivityPostItem) => {
-    setLocalActivityPosts((prev) => [item, ...prev]);
+    setActivityPosts((prev) => [
+      {
+        ...item,
+        liked: false,
+        likesCount: 0,
+        sharesCount: 0,
+        comments: [],
+      },
+      ...prev,
+    ]);
     if (typeof store.addPost === 'function') {
       store.addPost({
         id: item.id,
@@ -223,6 +350,78 @@ export default function ProfileTab() {
     }
   };
 
+  const handleToggleLike = (postId: string) => {
+    setActivityPosts((prev) =>
+      prev.map((p) => {
+        if (p.id !== postId) return p;
+        const nextLiked = !p.liked;
+        const currentCount = p.likesCount || 0;
+        return {
+          ...p,
+          liked: nextLiked,
+          likesCount: nextLiked ? currentCount + 1 : Math.max(0, currentCount - 1),
+        };
+      })
+    );
+  };
+
+  const handleAddComment = (postId: string, e: React.FormEvent) => {
+    e.preventDefault();
+    const text = (commentInputs[postId] || '').trim();
+    if (!text) return;
+
+    const newComment: PostCommentItem = {
+      id: `cmt-${Date.now()}`,
+      author: displayName,
+      text,
+      createdAt: 'الآن',
+    };
+
+    setActivityPosts((prev) =>
+      prev.map((p) =>
+        p.id === postId
+          ? {
+              ...p,
+              comments: [...(p.comments || []), newComment],
+            }
+          : p
+      )
+    );
+    setCommentInputs((prev) => ({ ...prev, [postId]: '' }));
+  };
+
+  const handleSharePost = async (post: ActivityPostItem) => {
+    setActivityPosts((prev) =>
+      prev.map((p) =>
+        p.id === post.id
+          ? {
+              ...p,
+              sharesCount: (p.sharesCount || 0) + 1,
+            }
+          : p
+      )
+    );
+
+    const shareText = `${post.headline}${post.content ? ` — ${post.content}` : ''}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: post.headline,
+          text: shareText,
+        });
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(shareText);
+      }
+    } catch {
+      // تجاهل إلغاء المشاركة من المتصفح
+    }
+  };
+
+  // حذف يتم فقط عندما يضغط المستخدم على زر الحذف بنفسه
+  const handleDeletePost = (postId: string) => {
+    setActivityPosts((prev) => prev.filter((p) => p.id !== postId));
+  };
+
   return (
     <div dir="rtl" className="mx-auto max-w-2xl space-y-4 pb-8 text-slate-100">
       {/* مدخلات معرض الصور المخفية */}
@@ -250,7 +449,6 @@ export default function ProfileTab() {
 
       {/* البطاقة الرئيسية: الغلاف + الصورة الشخصية + الاسم + الإحصائيات + الأزرار */}
       <section className="overflow-hidden rounded-2xl border border-purple-500/20 bg-slate-900/80 shadow-xl">
-        {/* الغلاف */}
         <div className="relative h-44 w-full bg-gradient-to-l from-purple-700/60 via-slate-800 to-cyan-600/50">
           {coverImage && (
             <img
@@ -271,7 +469,6 @@ export default function ProfileTab() {
           </button>
         </div>
 
-        {/* الصورة الشخصية + الاسم والنبذة */}
         <div className="px-4 pb-4">
           <div className="-mt-14 mb-3 flex items-end justify-between">
             <div className="relative">
@@ -318,7 +515,6 @@ export default function ProfileTab() {
             <p className="pt-1 text-xs leading-relaxed text-slate-300">{bio}</p>
           </div>
 
-          {/* أزرار سريعة بأسلوب فيسبوك */}
           <div className="mt-3.5 grid grid-cols-2 gap-2.5">
             <button
               type="button"
@@ -339,7 +535,6 @@ export default function ProfileTab() {
             </button>
           </div>
 
-          {/* صناديق الإحصائيات */}
           <div className="mt-4 grid grid-cols-3 gap-2.5">
             <div className="rounded-xl border border-slate-800 bg-slate-950/75 py-2.5 px-2 text-center">
               <p className="text-sm font-black text-cyan-400">{friends.length}</p>
@@ -352,12 +547,11 @@ export default function ProfileTab() {
               <p className="text-[11px] font-semibold text-slate-400">جهات اتصال</p>
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-950/75 py-2.5 px-2 text-center">
-              <p className="text-sm font-black text-cyan-400">{combinedPosts.length}</p>
+              <p className="text-sm font-black text-cyan-400">{activityPosts.length}</p>
               <p className="text-[11px] font-semibold text-slate-400">منشورات</p>
             </div>
           </div>
 
-          {/* بيانات التواصل السريعة */}
           <div className="mt-3 space-y-2">
             <div className="flex items-center justify-between rounded-xl border border-slate-800/90 bg-slate-950/60 px-3.5 py-2.5 text-xs">
               <span className="font-mono text-slate-200" dir="ltr">
@@ -381,7 +575,6 @@ export default function ProfileTab() {
           </div>
         </div>
 
-        {/* تبويبات فرعية داخل الملف الشخصي */}
         <div className="grid grid-cols-3 border-t border-slate-800 bg-slate-950/60">
           {(
             [
@@ -673,60 +866,170 @@ export default function ProfileTab() {
         </section>
       )}
 
-      {/* منشورات الملف الشخصي بتفصيل الصورة والغلاف والنشر */}
+      {/* منشورات الملف الشخصي مع أزرار أحببته وتعليق ومشاركة وحفظ دائم */}
       {activeSubTab === 'all' && (
         <section className="space-y-3">
           <h2 className="px-1 text-sm font-black text-white">المنشورات</h2>
 
-          {combinedPosts.length === 0 ? (
+          {activityPosts.length === 0 ? (
             <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 text-center text-xs text-slate-500">
               لا توجد منشورات بعد.
             </div>
           ) : (
-            combinedPosts.map((post, idx) => (
-              <article
-                key={`${post.id}-${idx}`}
-                className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 space-y-2.5"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    {avatarImage ? (
-                      <img
-                        src={avatarImage}
-                        alt={displayName}
-                        className="h-9 w-9 rounded-full object-cover border border-cyan-500/30"
-                      />
-                    ) : (
-                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-xs font-black text-cyan-300">
-                        {displayName.slice(0, 1)}
+            activityPosts.map((post) => {
+              const comments = post.comments || [];
+              const isCommentsOpen = openCommentsPostId === post.id;
+
+              return (
+                <article
+                  key={post.id}
+                  className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {avatarImage ? (
+                        <img
+                          src={avatarImage}
+                          alt={displayName}
+                          className="h-9 w-9 shrink-0 rounded-full object-cover border border-cyan-500/30"
+                        />
+                      ) : (
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs font-black text-cyan-300">
+                          {displayName.slice(0, 1)}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-white truncate">{post.headline}</p>
+                        <p className="text-[10px] text-slate-400">{post.createdAt}</p>
                       </div>
-                    )}
-                    <div>
-                      <p className="text-xs font-bold text-white">{post.headline}</p>
-                      <p className="text-[10px] text-slate-400">{post.createdAt}</p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePost(post.id)}
+                      title="حذف المنشور"
+                      aria-label="حذف المنشور"
+                      className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-950/40 hover:text-rose-400 transition"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+
+                  {post.content && (
+                    <p className="text-xs leading-relaxed text-slate-200 whitespace-pre-line">
+                      {post.content}
+                    </p>
+                  )}
+
+                  {post.image && (
+                    <img
+                      src={post.image}
+                      alt={post.headline}
+                      className={`w-full rounded-xl object-cover border border-slate-800 ${
+                        post.kind === 'avatar'
+                          ? 'mx-auto h-64 w-64 rounded-full'
+                          : 'max-h-80'
+                      }`}
+                    />
+                  )}
+
+                  {/* عدّادات التفاعل */}
+                  <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 text-[11px] text-slate-400">
+                    <span>{post.likesCount || 0} أحببته</span>
+                    <div className="flex items-center gap-3">
+                      <span>{comments.length} تعليق</span>
+                      <span>{post.sharesCount || 0} مشاركة</span>
                     </div>
                   </div>
-                </div>
 
-                {post.content && (
-                  <p className="text-xs leading-relaxed text-slate-200 whitespace-pre-line">
-                    {post.content}
-                  </p>
-                )}
+                  {/* أزرار التفاعل: أحببته - تعليق - مشاركة */}
+                  <div className="grid grid-cols-3 gap-1.5 border-t border-slate-800/80 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleLike(post.id)}
+                      className={`flex items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-bold transition ${
+                        post.liked
+                          ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                          : 'bg-slate-950/70 text-slate-300 hover:bg-slate-800/80'
+                      }`}
+                    >
+                      <Heart
+                        size={14}
+                        className={post.liked ? 'fill-rose-400 text-rose-400' : ''}
+                      />
+                      <span>أحببته</span>
+                    </button>
 
-                {post.image && (
-                  <img
-                    src={post.image}
-                    alt={post.headline}
-                    className={`w-full rounded-xl object-cover border border-slate-800 ${
-                      post.kind === 'avatar'
-                        ? 'mx-auto h-64 w-64 rounded-full'
-                        : 'max-h-80'
-                    }`}
-                  />
-                )}
-              </article>
-            ))
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenCommentsPostId((prev) => (prev === post.id ? null : post.id))
+                      }
+                      className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-950/70 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800/80 transition"
+                    >
+                      <MessageCircle size={14} className="text-cyan-400" />
+                      <span>تعليق</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSharePost(post)}
+                      className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-950/70 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800/80 transition"
+                    >
+                      <Share2 size={14} className="text-purple-400" />
+                      <span>مشاركة</span>
+                    </button>
+                  </div>
+
+                  {/* قسم التعليقات */}
+                  {isCommentsOpen && (
+                    <div className="space-y-2.5 border-t border-slate-800/80 pt-3">
+                      {comments.length > 0 && (
+                        <div className="space-y-1.5">
+                          {comments.map((cmt) => (
+                            <div
+                              key={cmt.id}
+                              className="rounded-xl bg-slate-950/80 border border-slate-800/80 px-3 py-2 text-xs"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-cyan-300">{cmt.author}</span>
+                                <span className="text-[10px] text-slate-500">{cmt.createdAt}</span>
+                              </div>
+                              <p className="mt-1 text-slate-200">{cmt.text}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <form
+                        onSubmit={(e) => handleAddComment(post.id, e)}
+                        className="flex items-center gap-2"
+                      >
+                        <input
+                          type="text"
+                          value={commentInputs[post.id] || ''}
+                          onChange={(e) =>
+                            setCommentInputs((prev) => ({
+                              ...prev,
+                              [post.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="اكتب تعليقاً..."
+                          className="flex-1 rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
+                        />
+                        <button
+                          type="submit"
+                          aria-label="إرسال التعليق"
+                          className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 text-white"
+                        >
+                          <Send size={14} />
+                        </button>
+                      </form>
+                    </div>
+                  )}
+                </article>
+              );
+            })
           )}
         </section>
       )}
