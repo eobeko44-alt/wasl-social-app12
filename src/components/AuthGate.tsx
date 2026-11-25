@@ -16,6 +16,8 @@ interface SavedAccount {
 const SAVED_ACCOUNTS_KEY = 'wasl_saved_accounts_v1';
 const toEmail = (p: string) => `${p.replace(/\D/g, '')}@wasl-phone.local`;
 
+let memoryAccounts: SavedAccount[] = [];
+
 function buildUsername(name: string, digits: string): string {
   const latin = name.toLowerCase().replace(/[^a-z0-9_]/g, '');
   if (latin.length >= 2) return `@${latin}`;
@@ -25,20 +27,27 @@ function buildUsername(name: string, digits: string): string {
 
 function loadSavedAccounts(): SavedAccount[] {
   try {
-    const raw = localStorage.getItem(SAVED_ACCOUNTS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    const raw = window.localStorage.getItem(SAVED_ACCOUNTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        memoryAccounts = parsed;
+        return parsed;
+      }
+    }
   } catch {
-    return [];
+    // fallback to memoryAccounts
   }
+  return memoryAccounts;
 }
 
 function persistSavedAccounts(list: SavedAccount[]) {
+  const sliced = list.slice(0, 6);
+  memoryAccounts = sliced;
   try {
-    localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(list.slice(0, 6)));
+    window.localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(sliced));
   } catch {
-    // تجاهل أخطاء التخزين المحلي
+    // ignore storage restriction
   }
 }
 
@@ -55,7 +64,7 @@ export default function AuthGate() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>([]);
+  const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>(() => loadSavedAccounts());
   const [forgotOpen, setForgotOpen] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
 
@@ -69,7 +78,8 @@ export default function AuthGate() {
 
   const saveAccountToList = (acc: SavedAccount) => {
     setSavedAccounts((prev) => {
-      const filtered = prev.filter(
+      const base = prev.length > 0 ? prev : loadSavedAccounts();
+      const filtered = base.filter(
         (item) => item.id !== acc.id && item.identifier !== acc.identifier
       );
       const next = [acc, ...filtered];
@@ -261,7 +271,7 @@ export default function AuthGate() {
         {!isSignUp && savedAccounts.length > 0 && (
           <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-slate-400">الحسابات المحفوظة على الجهاز</span>
+              <span className="text-[11px] font-bold text-slate-400">الحسابات المحفوظة</span>
               <span className="text-[11px] text-cyan-400">{savedAccounts.length}</span>
             </div>
             <div className="space-y-1.5 max-h-40 overflow-y-auto">
