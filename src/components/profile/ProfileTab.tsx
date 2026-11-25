@@ -17,28 +17,40 @@ interface SavedAccount {
 
 const SAVED_ACCOUNTS_KEY = 'wasl_saved_accounts_v1';
 const LAST_PASSWORD_KEY = 'wasl_last_session_pass_v1';
+const LAST_IDENTIFIER_KEY = 'wasl_last_session_id_v1';
 
-function readCachedPassword(): string | undefined {
+function readCachedPassword(identifier: string): string | undefined {
   try {
-    const win = window as unknown as { __waslLastPassword?: string };
-    if (win.__waslLastPassword) return win.__waslLastPassword;
-    const raw =
+    const rawPass =
+      window.localStorage.getItem(LAST_PASSWORD_KEY) ||
       window.sessionStorage?.getItem(LAST_PASSWORD_KEY) ||
-      window.localStorage?.getItem(LAST_PASSWORD_KEY);
-    return raw || undefined;
+      '';
+    const rawId =
+      window.localStorage.getItem(LAST_IDENTIFIER_KEY) ||
+      window.sessionStorage?.getItem(LAST_IDENTIFIER_KEY) ||
+      '';
+    if (!rawPass) return undefined;
+    if (
+      !rawId ||
+      rawId.replace(/\D/g, '') === identifier.replace(/\D/g, '') ||
+      rawId === identifier
+    ) {
+      return rawPass;
+    }
+    return rawPass;
   } catch {
     return undefined;
   }
 }
 
-function clearCachedPassword() {
+function clearCachedCredentials() {
   try {
-    const win = window as unknown as { __waslLastPassword?: string };
-    delete win.__waslLastPassword;
+    window.localStorage.removeItem(LAST_PASSWORD_KEY);
+    window.localStorage.removeItem(LAST_IDENTIFIER_KEY);
     window.sessionStorage?.removeItem(LAST_PASSWORD_KEY);
-    window.localStorage?.removeItem(LAST_PASSWORD_KEY);
+    window.sessionStorage?.removeItem(LAST_IDENTIFIER_KEY);
   } catch {
-    // ignore
+    // ignore storage errors
   }
 }
 
@@ -50,7 +62,14 @@ function saveCurrentAccountBeforeLogout(acc: SavedAccount) {
     const filtered = list.filter(
       (item) => item.id !== acc.id && item.identifier !== acc.identifier
     );
-    const next = [acc, ...filtered].slice(0, 8);
+    const prevMatch = list.find(
+      (item) => item.id === acc.id || item.identifier === acc.identifier
+    );
+    const merged: SavedAccount = {
+      ...acc,
+      password: acc.password || prevMatch?.password,
+    };
+    const next = [merged, ...filtered].slice(0, 8);
     window.localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(next));
   } catch {
     // ignore storage errors
@@ -110,8 +129,9 @@ export default function ProfileTab() {
       const isPhoneLocal = metaEmail.endsWith('@wasl-phone.local');
       const phoneFromEmail = isPhoneLocal ? metaEmail.replace('@wasl-phone.local', '') : '';
       const identifier = (currentPhone || phoneFromEmail || metaEmail || currentUsername).trim();
-      const mode: AuthMode = currentPhone || phoneFromEmail || !metaEmail.includes('@') ? 'phone' : 'email';
-      const cachedPass = readCachedPassword();
+      const mode: AuthMode =
+        currentPhone || phoneFromEmail || !metaEmail.includes('@') ? 'phone' : 'email';
+      const cachedPass = readCachedPassword(identifier);
 
       saveCurrentAccountBeforeLogout({
         id: userId || identifier || currentUsername,
@@ -123,7 +143,7 @@ export default function ProfileTab() {
         ...(cachedPass ? { password: cachedPass } : {}),
       });
     }
-    clearCachedPassword();
+    clearCachedCredentials();
     await supabase.auth.signOut();
     setConfirmLogoutOpen(false);
     setLoggingOut(false);
