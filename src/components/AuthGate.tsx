@@ -233,7 +233,9 @@ export default function AuthGate() {
         setErr('البيانات غير صحيحة.');
       } else {
         const meta = data.user?.user_metadata;
-        const resolvedName = meta?.full_name ? String(meta.full_name).trim() : cleanName || 'مستخدم وِصل';
+        const resolvedName = meta?.full_name
+          ? String(meta.full_name).trim()
+          : cleanName || (mode === 'phone' ? cleanPhone : cleanEmail.split('@')[0]) || 'مستخدم وِصل';
         const resolvedPhone = meta?.phone_number ? String(meta.phone_number).trim() : cleanPhone;
         const resolvedHandle = buildUsername(resolvedName, digits);
 
@@ -268,44 +270,51 @@ export default function AuthGate() {
           </p>
         </div>
 
-        {!isSignUp && savedAccounts.length > 0 && (
+        {!isSignUp && (
           <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-slate-400">الحسابات المحفوظة</span>
               <span className="text-[11px] text-cyan-400">{savedAccounts.length}</span>
             </div>
-            <div className="space-y-1.5 max-h-40 overflow-y-auto">
-              {savedAccounts.map((acc) => (
-                <div
-                  key={acc.id}
-                  className="flex items-center justify-between gap-2 rounded-xl border border-slate-800/90 bg-slate-900 px-3 py-2"
-                >
-                  <button
-                    type="button"
-                    onClick={() => handleSelectSavedAccount(acc)}
-                    className="flex flex-1 items-center gap-2.5 text-right"
+
+            {savedAccounts.length === 0 ? (
+              <p className="py-1.5 text-center text-[11px] text-slate-500">
+                لا توجد حسابات محفوظة بعد. سجّل دخولك بأي حساب ليُحفظ هنا للتبديل السريع.
+              </p>
+            ) : (
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                {savedAccounts.map((acc) => (
+                  <div
+                    key={acc.id}
+                    className="flex items-center justify-between gap-2 rounded-xl border border-slate-800/90 bg-slate-900 px-3 py-2"
                   >
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 text-xs font-black text-cyan-300 border border-cyan-500/20">
-                      {(acc.name || 'و').slice(0, 1)}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-bold text-white">{acc.name}</p>
-                      <p className="truncate text-[11px] text-slate-400" dir="ltr">
-                        {acc.identifier}
-                      </p>
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeSavedAccount(acc.id)}
-                    title="إزالة الحساب"
-                    className="rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-rose-950/40 hover:text-rose-400"
-                  >
-                    إزالة
-                  </button>
-                </div>
-              ))}
-            </div>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectSavedAccount(acc)}
+                      className="flex flex-1 items-center gap-2.5 text-right"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 text-xs font-black text-cyan-300 border border-cyan-500/20">
+                        {(acc.name || 'و').slice(0, 1)}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-bold text-white">{acc.name}</p>
+                        <p className="truncate text-[11px] text-slate-400" dir="ltr">
+                          {acc.identifier}
+                        </p>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeSavedAccount(acc.id)}
+                      title="إزالة الحساب"
+                      className="rounded-lg px-2 py-1 text-[11px] text-slate-500 hover:bg-rose-950/40 hover:text-rose-400"
+                    >
+                      إزالة
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
