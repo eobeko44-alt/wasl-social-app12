@@ -238,46 +238,48 @@ export default function ProfileTab() {
             تسجيل الخروج
           </button>
         ) : (
-          <div className="space-y-2.5 rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
-            <p className="text-xs font-bold text-white">تسجيل الخروج وحفظ الحساب؟</p>
-            <p className="text-[11px] text-slate-400">
-              يمكن حفظ بيانات حسابك ({currentName}) ليظهر في شاشة الدخول السريع.
-            </p>
+          <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/85 p-4">
+            <div className="space-y-1">
+              <p className="text-xs font-bold text-white">احفظ لي كلمة سر لمرة جاية؟</p>
+              <p className="text-[11px] text-slate-400">
+                لو اخترت «نعم» هيظهر حساب ({currentName}) في قائمة الحسابات ويفتح طوالي بدون كلمة سر.
+              </p>
+            </div>
+
             <input
               type="password"
               dir="ltr"
               value={savePassword}
               onChange={(e) => setSavePassword(e.target.value)}
-              placeholder="كلمة السر للدخول السريع (اختياري)"
+              placeholder="اكتب كلمة السر هنا لو حابب يحفظها"
               className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-white placeholder:text-slate-500"
             />
-            <div className="grid grid-cols-1 gap-2 pt-1">
+
+            <div className="grid grid-cols-3 gap-2 pt-1">
               <button
                 type="button"
                 disabled={loggingOut}
                 onClick={() => performLogout(true)}
-                className="w-full rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2.5 text-xs font-bold text-white transition hover:brightness-110 disabled:opacity-50"
+                className="rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2.5 text-xs font-bold text-white transition hover:brightness-110 disabled:opacity-50"
               >
-                {loggingOut ? 'جاري التنفيذ...' : 'تسجيل خروج وحفظ الحساب'}
+                {loggingOut ? '...' : 'نعم'}
               </button>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  disabled={loggingOut}
-                  onClick={() => performLogout(false)}
-                  className="rounded-xl border border-rose-500/30 bg-rose-950/30 py-2 text-xs font-bold text-rose-300 hover:bg-rose-950/50 disabled:opacity-50"
-                >
-                  خروج بدون حفظ
-                </button>
-                <button
-                  type="button"
-                  disabled={loggingOut}
-                  onClick={() => setConfirmLogoutOpen(false)}
-                  className="rounded-xl border border-slate-700 bg-slate-900 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-50"
-                >
-                  إلغاء
-                </button>
-              </div>
+              <button
+                type="button"
+                disabled={loggingOut}
+                onClick={() => performLogout(false)}
+                className="rounded-xl border border-rose-500/30 bg-rose-950/30 py-2.5 text-xs font-bold text-rose-300 hover:bg-rose-950/50 disabled:opacity-50"
+              >
+                لا
+              </button>
+              <button
+                type="button"
+                disabled={loggingOut}
+                onClick={() => performLogout(false)}
+                className="rounded-xl border border-slate-700 bg-slate-900 py-2.5 text-xs font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+              >
+                ليس الآن
+              </button>
             </div>
           </div>
         )}
