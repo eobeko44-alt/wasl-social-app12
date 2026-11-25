@@ -22,19 +22,38 @@ import { supabase } from '@/lib/supabase';
 
 type ProfileSectionTab = 'all' | 'photos' | 'about';
 
+interface ActivityPostItem {
+  id: string;
+  authorName: string;
+  authorHandle?: string;
+  authorAvatar?: string;
+  headline: string;
+  content?: string;
+  image?: string;
+  createdAt: string;
+  kind: 'avatar' | 'cover' | 'photo' | 'post';
+}
+
 export default function ProfileTab() {
   const store = useAppStore() as Record<string, any>;
   const profile = store.profile || {};
-  const posts: Array<Record<string, any>> = Array.isArray(store.posts) ? store.posts : [];
+  const storePosts: Array<Record<string, any>> = Array.isArray(store.posts) ? store.posts : [];
   const friends: Array<Record<string, any>> = Array.isArray(store.friends)
     ? store.friends
     : Array.isArray(store.contacts)
       ? store.contacts
       : [];
 
+  const displayName =
+    profile.name && profile.name !== 'أنت' ? String(profile.name) : 'abobaker';
+  const rawHandle = profile.username || '@abobaker';
+  const displayHandle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
+  const displayPhone = profile.phone || profile.phone_number || '+966 5X XXX XXXX';
+
   const [activeSubTab, setActiveSubTab] = useState<ProfileSectionTab>('all');
   const [coverImage, setCoverImage] = useState<string>(profile.coverImage || profile.cover || '');
   const [avatarImage, setAvatarImage] = useState<string>(profile.avatar || '');
+  const [localActivityPosts, setLocalActivityPosts] = useState<ActivityPostItem[]>([]);
   const [isPublicAccount, setIsPublicAccount] = useState<boolean>(
     typeof profile.isPublic === 'boolean' ? profile.isPublic : true
   );
@@ -54,7 +73,7 @@ export default function ProfileTab() {
       : 'PUBG Mobile، Garena Free Fire'
   );
 
-  // أبرز القصص / القصص البارزة
+  // أبرز القصص
   const [highlights, setHighlights] = useState<Array<{ id: string; title: string; image?: string }>>(
     Array.isArray(profile.highlights) ? profile.highlights : []
   );
@@ -63,20 +82,41 @@ export default function ProfileTab() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const highlightInputRef = useRef<HTMLInputElement | null>(null);
 
-  const displayName = profile.name || profile.full_name || 'abobaker096605';
-  const rawHandle = profile.username || '@abobaker096605';
-  const displayHandle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
-  const displayPhone = profile.phone || profile.phone_number || '+966 5X XXX XXXX';
+  const normalizedStorePosts: ActivityPostItem[] = storePosts.map((p, idx) => {
+    const img = p.image || p.imageUrl || p.photo;
+    const text = p.content ? String(p.content) : '';
+    const isAvatarUpdate = text.includes('صورة ملفه الشخصي') || text.includes('صورة الملف الشخصي');
+    const isCoverUpdate = text.includes('صورة الغلاف');
 
-  const userPosts = posts.filter((p) => {
-    if (!p) return false;
-    if (p.authorHandle && displayHandle && String(p.authorHandle) === displayHandle) return true;
-    if (p.authorName && displayName && String(p.authorName) === displayName) return true;
-    return false;
+    let headline = `نشر ${displayName}`;
+    let kind: ActivityPostItem['kind'] = 'post';
+
+    if (isAvatarUpdate) {
+      headline = `قام ${displayName} بتحديث صورة ملفه الشخصي`;
+      kind = 'avatar';
+    } else if (isCoverUpdate) {
+      headline = `قام ${displayName} بتحديث صورة الغلاف`;
+      kind = 'cover';
+    } else if (img) {
+      headline = `نشر ${displayName} صورة`;
+      kind = 'photo';
+    }
+
+    return {
+      id: String(p.id || `store-post-${idx}`),
+      authorName: displayName,
+      authorHandle: displayHandle,
+      authorAvatar: avatarImage || (typeof p.authorAvatar === 'string' ? p.authorAvatar : undefined),
+      headline,
+      content: isAvatarUpdate || isCoverUpdate ? undefined : text || undefined,
+      image: typeof img === 'string' ? img : undefined,
+      createdAt: String(p.createdAt || 'الآن'),
+      kind,
+    };
   });
 
-  const visiblePosts = userPosts.length > 0 ? userPosts : posts;
-  const photoPosts = visiblePosts.filter((p) => Boolean(p.image || p.imageUrl || p.photo));
+  const combinedPosts: ActivityPostItem[] = [...localActivityPosts, ...normalizedStorePosts];
+  const photoPosts = combinedPosts.filter((p) => Boolean(p.image));
   const interestsList = interestsText
     .split(/[,،\n]+/)
     .map((s) => s.trim())
@@ -98,11 +138,36 @@ export default function ProfileTab() {
     e.target.value = '';
   };
 
+  const pushActivityPost = (item: ActivityPostItem) => {
+    setLocalActivityPosts((prev) => [item, ...prev]);
+    if (typeof store.addPost === 'function') {
+      store.addPost({
+        id: item.id,
+        authorName: item.authorName,
+        authorHandle: item.authorHandle,
+        authorAvatar: item.authorAvatar,
+        content: item.content ? `${item.headline} — ${item.content}` : item.headline,
+        image: item.image,
+        createdAt: item.createdAt,
+      });
+    }
+  };
+
   const handleCoverChange = (dataUrl: string) => {
     setCoverImage(dataUrl);
     if (typeof store.updateProfile === 'function') {
       store.updateProfile({ coverImage: dataUrl, cover: dataUrl });
     }
+    pushActivityPost({
+      id: `cover-${Date.now()}`,
+      authorName: displayName,
+      authorHandle: displayHandle,
+      authorAvatar: avatarImage || undefined,
+      headline: `قام ${displayName} بتحديث صورة الغلاف`,
+      image: dataUrl,
+      createdAt: 'الآن',
+      kind: 'cover',
+    });
   };
 
   const handleAvatarChange = (dataUrl: string) => {
@@ -110,17 +175,16 @@ export default function ProfileTab() {
     if (typeof store.updateProfile === 'function') {
       store.updateProfile({ avatar: dataUrl });
     }
-    if (typeof store.addPost === 'function') {
-      store.addPost({
-        id: `avatar-update-${Date.now()}`,
-        authorName: displayName,
-        authorHandle: displayHandle,
-        authorAvatar: dataUrl,
-        content: `قام ${displayName} بتحديث صورة ملفه الشخصي.`,
-        image: dataUrl,
-        createdAt: 'الآن',
-      });
-    }
+    pushActivityPost({
+      id: `avatar-${Date.now()}`,
+      authorName: displayName,
+      authorHandle: displayHandle,
+      authorAvatar: dataUrl,
+      headline: `قام ${displayName} بتحديث صورة ملفه الشخصي`,
+      image: dataUrl,
+      createdAt: 'الآن',
+      kind: 'avatar',
+    });
   };
 
   const handleAddHighlight = (dataUrl: string, fileName: string) => {
@@ -275,7 +339,7 @@ export default function ProfileTab() {
             </button>
           </div>
 
-          {/* صناديق الإحصائيات (أصدقاء - جهات اتصال - منشورات) */}
+          {/* صناديق الإحصائيات */}
           <div className="mt-4 grid grid-cols-3 gap-2.5">
             <div className="rounded-xl border border-slate-800 bg-slate-950/75 py-2.5 px-2 text-center">
               <p className="text-sm font-black text-cyan-400">{friends.length}</p>
@@ -288,7 +352,7 @@ export default function ProfileTab() {
               <p className="text-[11px] font-semibold text-slate-400">جهات اتصال</p>
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-950/75 py-2.5 px-2 text-center">
-              <p className="text-sm font-black text-cyan-400">{visiblePosts.length}</p>
+              <p className="text-sm font-black text-cyan-400">{combinedPosts.length}</p>
               <p className="text-[11px] font-semibold text-slate-400">منشورات</p>
             </div>
           </div>
@@ -596,35 +660,32 @@ export default function ProfileTab() {
             <p className="py-4 text-center text-xs text-slate-500">لا توجد صور منشورة بعد.</p>
           ) : (
             <div className="grid grid-cols-3 gap-2">
-              {photoPosts.map((p, idx) => {
-                const imgSrc = String(p.image || p.imageUrl || p.photo);
-                return (
-                  <img
-                    key={String(p.id || idx)}
-                    src={imgSrc}
-                    alt={`صورة ${idx + 1}`}
-                    className="h-28 w-full rounded-xl object-cover border border-slate-800"
-                  />
-                );
-              })}
+              {photoPosts.map((p, idx) => (
+                <img
+                  key={`${p.id}-${idx}`}
+                  src={p.image}
+                  alt={`صورة ${idx + 1}`}
+                  className="h-28 w-full rounded-xl object-cover border border-slate-800"
+                />
+              ))}
             </div>
           )}
         </section>
       )}
 
-      {/* منشورات الملف الشخصي */}
+      {/* منشورات الملف الشخصي بتفصيل الصورة والغلاف والنشر */}
       {activeSubTab === 'all' && (
         <section className="space-y-3">
           <h2 className="px-1 text-sm font-black text-white">المنشورات</h2>
 
-          {visiblePosts.length === 0 ? (
+          {combinedPosts.length === 0 ? (
             <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 text-center text-xs text-slate-500">
               لا توجد منشورات بعد.
             </div>
           ) : (
-            visiblePosts.map((post, idx) => (
+            combinedPosts.map((post, idx) => (
               <article
-                key={String(post.id || idx)}
+                key={`${post.id}-${idx}`}
                 className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 space-y-2.5"
               >
                 <div className="flex items-center justify-between">
@@ -641,25 +702,27 @@ export default function ProfileTab() {
                       </div>
                     )}
                     <div>
-                      <p className="text-xs font-bold text-white">{displayName}</p>
-                      <p className="text-[10px] text-slate-400">
-                        {String(post.createdAt || 'الآن')}
-                      </p>
+                      <p className="text-xs font-bold text-white">{post.headline}</p>
+                      <p className="text-[10px] text-slate-400">{post.createdAt}</p>
                     </div>
                   </div>
                 </div>
 
                 {post.content && (
                   <p className="text-xs leading-relaxed text-slate-200 whitespace-pre-line">
-                    {String(post.content)}
+                    {post.content}
                   </p>
                 )}
 
-                {(post.image || post.imageUrl || post.photo) && (
+                {post.image && (
                   <img
-                    src={String(post.image || post.imageUrl || post.photo)}
-                    alt="منشور"
-                    className="max-h-80 w-full rounded-xl object-cover border border-slate-800"
+                    src={post.image}
+                    alt={post.headline}
+                    className={`w-full rounded-xl object-cover border border-slate-800 ${
+                      post.kind === 'avatar'
+                        ? 'mx-auto h-64 w-64 rounded-full'
+                        : 'max-h-80'
+                    }`}
                   />
                 )}
               </article>
