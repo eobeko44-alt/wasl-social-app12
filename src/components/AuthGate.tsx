@@ -18,11 +18,23 @@ interface SavedAccount {
 const SAVED_ACCOUNTS_KEY = 'wasl_saved_accounts_v1';
 const LAST_PASSWORD_KEY = 'wasl_last_session_pass_v1';
 const LAST_IDENTIFIER_KEY = 'wasl_last_session_id_v1';
-const toEmail = (p: string) => `${p.replace(/\D/g, '')}@wasl-phone.local`;
+const toPhoneAuthEmail = (p: string) => `${p.replace(/\D/g, '')}@wasl-phone.local`;
 
 let memoryAccounts: SavedAccount[] = [];
 let memoryPassword = '';
 let memoryIdentifier = '';
+
+function isRealEmail(val: string): boolean {
+  const clean = val.trim();
+  return Boolean(clean && clean.includes('@') && !clean.endsWith('@wasl-phone.local'));
+}
+
+function isValidPhone(val: string): boolean {
+  const clean = val.trim();
+  if (!clean || clean.includes('@') || /[a-zA-Z]/.test(clean)) return false;
+  const digits = clean.replace(/\D/g, '');
+  return digits.length >= 7;
+}
 
 function writeLastCredentials(identifier: string, secret: string) {
   const cleanPass = secret.trim();
@@ -76,11 +88,37 @@ function persistSavedAccounts(list: SavedAccount[]) {
   }
 }
 
+function resolveAccountLink(rawId: string, rawMode?: AuthMode): {
+  mode: AuthMode;
+  identifier: string;
+} | null {
+  const clean = String(rawId || '').trim();
+  if (!clean) return null;
+
+  if (rawMode === 'email') {
+    return isRealEmail(clean) ? { mode: 'email', identifier: clean } : null;
+  }
+
+  if (rawMode === 'phone') {
+    return isValidPhone(clean) ? { mode: 'phone', identifier: clean } : null;
+  }
+
+  if (isRealEmail(clean)) {
+    return { mode: 'email', identifier: clean };
+  }
+
+  if (isValidPhone(clean)) {
+    return { mode: 'phone', identifier: clean };
+  }
+
+  return null;
+}
+
 export default function AuthGate() {
   const { updateProfile } = useAppStore();
   const [isSignUp, setIsSignUp] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
-  const [mode, setMode] = useState<AuthMode>('phone');
+  const [mode, setMode] = useState<AuthMode>('email');
 
   const [name, setName] = useState('');
   const [birthDate, setBirthDate] = useState('');
@@ -99,12 +137,23 @@ export default function AuthGate() {
   const [err, setErr] = useState<string | null>(null);
 
   const saveAccountToList = (acc: SavedAccount) => {
+    const link = resolveAccountLink(acc.identifier, acc.mode);
+    if (!link) return;
+
+    const normalizedAcc: SavedAccount = {
+      ...acc,
+      mode: link.mode,
+      identifier: link.identifier,
+    };
+
     setSavedAccounts((prev) => {
       const base = prev.length > 0 ? prev : loadSavedAccounts();
       const filtered = base.filter(
-        (item) => item.id !== acc.id && item.identifier !== acc.identifier
+        (item) =>
+          item.id !== normalizedAcc.id &&
+          item.identifier.trim().toLowerCase() !== normalizedAcc.identifier.trim().toLowerCase()
       );
-      const next = [acc, ...filtered];
+      const next = [normalizedAcc, ...filtered];
       persistSavedAccounts(next);
       return next;
     });
@@ -119,31 +168,38 @@ export default function AuthGate() {
     const meta = user.user_metadata || {};
     const rawEmail = String(user.email || '').trim();
     const isPhoneLocal = rawEmail.endsWith('@wasl-phone.local');
-    const hasRealEmail = Boolean(rawEmail.includes('@') && !isPhoneLocal);
     const phoneDigits = isPhoneLocal ? rawEmail.replace('@wasl-phone.local', '') : '';
-    const resolvedPhone = meta.phone_number ? String(meta.phone_number).trim() : phoneDigits;
+    const metaPhone = meta.phone_number ? String(meta.phone_number).trim() : '';
 
-    const accMode: AuthMode = hasRealEmail ? 'email' : 'phone';
-    const identifier = accMode === 'email' ? rawEmail : resolvedPhone;
-    if (!identifier) return;
+    const link = isRealEmail(rawEmail)
+      ? { mode: 'email' as AuthMode, identifier: rawEmail }
+      : isValidPhone(metaPhone)
+      ? { mode: 'phone' as AuthMode, identifier: metaPhone }
+      : isValidPhone(phoneDigits)
+      ? { mode: 'phone' as AuthMode, identifier: phoneDigits }
+      : null;
+
+    if (!link) return;
 
     const resolvedName = meta.full_name
       ? String(meta.full_name).trim()
-      : accMode === 'email'
+      : link.mode === 'email'
       ? rawEmail.split('@')[0]
-      : resolvedPhone || 'مستخدم وِصل';
+      : link.identifier || 'مستخدم وِصل';
 
-    const handle = buildUsername(resolvedName, phoneDigits || resolvedPhone.replace(/\D/g, ''));
+    const handle = buildUsername(resolvedName, link.identifier.replace(/\D/g, ''));
     const existing = loadSavedAccounts().find(
-      (item) => item.id === user.id || item.identifier.toLowerCase() === identifier.toLowerCase()
+      (item) =>
+        item.id === user.id ||
+        item.identifier.trim().toLowerCase() === link.identifier.trim().toLowerCase()
     );
     if (!existing) return;
 
     saveAccountToList({
-      id: user.id || identifier,
+      id: user.id || existing.id || link.identifier,
       name: resolvedName,
-      identifier,
-      mode: accMode,
+      identifier: link.identifier,
+      mode: link.mode,
       username: handle,
       avatar: meta.avatar_url ? String(meta.avatar_url) : existing.avatar,
       password: existing.password,
@@ -185,15 +241,17 @@ export default function AuthGate() {
     });
   };
 
-  const isSameIdentifier = (a: string, b: string, accMode: AuthMode) => {
-    const cleanA = a.trim().toLowerCase();
-    const cleanB = b.trim().toLowerCase();
-    if (!cleanA || !cleanB) return false;
-    if (accMode === 'email') {
-      return cleanA === cleanB;
+  const isMatchingSavedSecret = (savedId: string, link: { mode: AuthMode; identifier: string }) => {
+    const cleanSaved = savedId.trim().toLowerCase();
+    const cleanTarget = link.identifier.trim().toLowerCase();
+    if (!cleanSaved || !cleanTarget) return false;
+
+    if (link.mode === 'email') {
+      return cleanSaved === cleanTarget;
     }
-    const digitsA = cleanA.replace(/\D/g, '');
-    const digitsB = cleanB.replace(/\D/g, '');
+
+    const digitsA = cleanSaved.replace(/\D/g, '');
+    const digitsB = cleanTarget.replace(/\D/g, '');
     return Boolean(digitsA && digitsB && digitsA === digitsB);
   };
 
@@ -203,35 +261,31 @@ export default function AuthGate() {
     setForgotOpen(false);
     setIsSignUp(false);
 
-    const rawId = String(acc.identifier || '').trim();
-    const isPhoneLocal = rawId.endsWith('@wasl-phone.local');
-    const hasRealEmail = Boolean(rawId.includes('@') && !isPhoneLocal);
-    const resolvedMode: AuthMode = hasRealEmail ? 'email' : 'phone';
-    setMode(resolvedMode);
-
-    if (resolvedMode === 'email') {
-      setEmail(rawId);
-      setPhone('');
-    } else {
-      setPhone(rawId);
-      setEmail('');
-    }
-    if (acc.name) setName(acc.name);
-
-    const digits = rawId.replace(/\D/g, '');
-    if (resolvedMode === 'phone' && digits.length < 7) {
+    const link = resolveAccountLink(acc.identifier, acc.mode);
+    if (!link) {
       setShowLoginForm(true);
       return;
     }
 
+    setMode(link.mode);
+    if (link.mode === 'email') {
+      setEmail(link.identifier);
+      setPhone('');
+    } else {
+      setPhone(link.identifier);
+      setEmail('');
+    }
+    if (acc.name) setName(acc.name);
+
     const effectivePassword =
       acc.password ||
-      (isSameIdentifier(memoryIdentifier, rawId, resolvedMode) ? memoryPassword : '') ||
+      (memoryPassword && isMatchingSavedSecret(memoryIdentifier, link) ? memoryPassword : '') ||
       (() => {
         try {
           const savedId = window.localStorage.getItem(LAST_IDENTIFIER_KEY) || '';
-          if (isSameIdentifier(savedId, rawId, resolvedMode)) {
-            return window.localStorage.getItem(LAST_PASSWORD_KEY) || '';
+          const savedPass = window.localStorage.getItem(LAST_PASSWORD_KEY) || '';
+          if (savedPass && isMatchingSavedSecret(savedId, link)) {
+            return savedPass;
           }
         } catch {
           // ignore
@@ -241,11 +295,15 @@ export default function AuthGate() {
 
     if (effectivePassword) {
       setPassword(effectivePassword);
-      writeLastCredentials(rawId, effectivePassword);
+      writeLastCredentials(link.identifier, effectivePassword);
       setLoading(true);
-      const target = resolvedMode === 'email' ? rawId : toEmail(digits);
+      const authEmail =
+        link.mode === 'email'
+          ? link.identifier
+          : toPhoneAuthEmail(link.identifier.replace(/\D/g, ''));
+
       const { error } = await supabase.auth.signInWithPassword({
-        email: target,
+        email: authEmail,
         password: effectivePassword,
       });
       setLoading(false);
@@ -262,19 +320,18 @@ export default function AuthGate() {
     setMsg(null);
 
     if (mode === 'phone') {
-      const digits = phone.replace(/\D/g, '');
-      if (digits.length < 7) {
-        setErr('اكتب رقم الهاتف أولاً لمعرفة حالة الحساب.');
+      if (!isValidPhone(phone)) {
+        setErr('اكتب رقم هاتف صحيح أولاً.');
         return;
       }
       setErr(
-        'الحسابات المسجلة برقم الهاتف لا تملك بريداً إلكترونياً لاستقبال رابط الاستعادة. يمكنك تحديث كلمة المرور من لوحة Supabase أو تسجيل الدخول بحساب آخر.'
+        'الحسابات المرتبطة برقم الهاتف لا تستقبل رابط الاستعادة عبر البريد. إذا كان حسابك مربوطاً ببريد، بدّل إلى «بالبريد».'
       );
       return;
     }
 
     const cleanEmail = email.trim();
-    if (!cleanEmail) {
+    if (!isRealEmail(cleanEmail)) {
       setErr('اكتب بريدك الإلكتروني أولاً لإرسال رابط استعادة كلمة السر.');
       return;
     }
@@ -318,13 +375,16 @@ export default function AuthGate() {
     setErr(null);
     setMsg(null);
 
-    const digits = phone.replace(/\D/g, '');
-    if (mode === 'phone' && digits.length < 7) {
+    const cleanPhone = phone.trim();
+    const cleanEmail = email.trim();
+    const digits = cleanPhone.replace(/\D/g, '');
+
+    if (mode === 'phone' && !isValidPhone(cleanPhone)) {
       setErr('اكتب رقم صحيح (7 أرقام على الأقل).');
       setLoading(false);
       return;
     }
-    if (mode === 'email' && !email.trim()) {
+    if (mode === 'email' && !isRealEmail(cleanEmail)) {
       setErr('اكتب بريدك الإلكتروني.');
       setLoading(false);
       return;
@@ -337,11 +397,9 @@ export default function AuthGate() {
       return;
     }
 
-    const cleanPhone = mode === 'phone' ? phone.trim() : '';
-    const cleanEmail = mode === 'email' ? email.trim() : '';
-    const target = mode === 'phone' ? toEmail(digits) : cleanEmail;
-    const handle = buildUsername(cleanName || 'user', digits);
     const activeIdentifier = mode === 'phone' ? cleanPhone : cleanEmail;
+    const target = mode === 'phone' ? toPhoneAuthEmail(digits) : cleanEmail;
+    const handle = buildUsername(cleanName || 'user', digits);
 
     writeLastCredentials(activeIdentifier, password);
 
@@ -353,7 +411,7 @@ export default function AuthGate() {
           data: {
             full_name: cleanName,
             login_method: mode,
-            phone_number: cleanPhone || null,
+            phone_number: mode === 'phone' ? cleanPhone : null,
             birth_date: birthDate || null,
             gender: gender || null,
             username: handle.replace(/^@/, ''),
@@ -366,7 +424,7 @@ export default function AuthGate() {
         updateProfile({
           name: cleanName,
           username: handle,
-          ...(cleanPhone ? { phone: cleanPhone } : {}),
+          ...(mode === 'phone' ? { phone: cleanPhone } : {}),
         });
         setMsg(data.session ? 'تم إنشاء الحساب وتسجيل الدخول.' : 'تم إنشاء الحساب بنجاح.');
       }
@@ -382,7 +440,7 @@ export default function AuthGate() {
           name: resolvedName,
           username: resolvedHandle,
         };
-        if (cleanPhone) {
+        if (mode === 'phone') {
           patch.phone = cleanPhone;
         }
         updateProfile(patch);
