@@ -20,6 +20,7 @@ import {
   SlidersHorizontal,
   Trash2,
   X,
+  MoreHorizontal,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -38,6 +39,14 @@ export interface FriendItem {
   id: string;
   name: string;
   avatar?: string;
+}
+
+interface SwitchableAccount {
+  id: string;
+  name: string;
+  avatar?: string;
+  phoneOrEmail?: string;
+  lastUsedAt: number;
 }
 
 interface WaslHeaderBarProps {
@@ -62,6 +71,7 @@ const DARK_MODE_STORAGE_KEY = 'wasl_dark_mode_v1';
 const LANG_STORAGE_KEY = 'wasl_lang_v1';
 const PROFILE_META_KEY = 'wasl_profile_meta_v3';
 const OVERRIDE_NAME_KEY = 'wasl_override_name_v1';
+const SAVED_ACCOUNTS_KEY = 'wasl_saved_accounts_v1';
 const NAME_LOCK_KEY = 'wasl_name_last_changed_at_v1';
 const NAME_COOLDOWN_DAYS = 7;
 const NAME_COOLDOWN_MS = NAME_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
@@ -123,6 +133,37 @@ const SWATCH_COLORS: Record<string, string> = {
   neon: 'bg-fuchsia-600',
   light: 'bg-white',
 };
+
+function readLocalSavedAccounts(): SwitchableAccount[] {
+  try {
+    const raw = localStorage.getItem(SAVED_ACCOUNTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item: any, idx: number) => ({
+        id: String(item?.id || `acc-${idx}`),
+        name: String(item?.name || 'مستخدم وِصل'),
+        avatar: typeof item?.avatar === 'string' && item.avatar ? item.avatar : undefined,
+        phoneOrEmail:
+          typeof item?.phoneOrEmail === 'string' && item.phoneOrEmail
+            ? item.phoneOrEmail
+            : undefined,
+        lastUsedAt: typeof item?.lastUsedAt === 'number' ? item.lastUsedAt : Date.now(),
+      }))
+      .sort((a, b) => b.lastUsedAt - a.lastUsedAt);
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalSavedAccounts(list: SwitchableAccount[]): void {
+  try {
+    localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(list));
+  } catch {
+    // تجاهل
+  }
+}
 
 function openHeaderDB(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
@@ -423,6 +464,10 @@ export function WaslHeaderBar({
   const [searchQuery, setSearchQuery] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  const [switchModalOpen, setSwitchModalOpen] = useState(false);
+  const [switchAccountsList, setSwitchAccountsList] = useState<SwitchableAccount[]>([]);
+  const [switchManageMode, setSwitchManageMode] = useState(false);
+
   const initialProfile = readPersistedName();
   const hasOverrideRef = useRef<boolean>(initialProfile.hasOverride);
 
@@ -432,6 +477,114 @@ export function WaslHeaderBar({
   const [lastNameChangedAt, setLastNameChangedAt] = useState<number | null>(() =>
     readNameLockTimestamp()
   );
+
+  const loadAccountsForSwitcher = async () => {
+    const localList = readLocalSavedAccounts();
+    const fallbackCurrent: SwitchableAccount = {
+      id: 'current-user',
+      name: displayName || currentUserName || 'بيكا ستور',
+      avatar: userAvatar,
+      lastUsedAt: Date.now(),
+    };
+
+    const baseList = localList.length > 0 ? localList : [fallbackCurrent];
+    setSwitchAccountsList(baseList);
+
+    try {
+      const { data, error } = await supabase
+        .from('saved_accounts')
+        .select('id, name, avatar, phone_or_email, last_used_at')
+        .order('last_used_at', { ascending: false });
+
+      if (!error && Array.isArray(data) && data.length > 0) {
+        const remoteList: SwitchableAccount[] = data.map((row: any) => ({
+          id: String(row.id),
+          name: String(row.name || 'مستخدم وِصل'),
+          avatar: typeof row.avatar === 'string' && row.avatar ? row.avatar : undefined,
+          phoneOrEmail:
+            typeof row.phone_or_email === 'string' && row.phone_or_email
+              ? row.phone_or_email
+              : undefined,
+          lastUsedAt: row.last_used_at ? new Date(String(row.last_used_at)).getTime() : Date.now(),
+        }));
+
+        const merged = new Map<string, SwitchableAccount>();
+        for (const r of remoteList) merged.set(r.id, r);
+        for (const l of localList) {
+          const prev = merged.get(l.id);
+          if (!prev || l.lastUsedAt >= prev.lastUsedAt) {
+            merged.set(l.id, { ...prev, ...l, avatar: l.avatar || prev?.avatar });
+          }
+        }
+        const combined = Array.from(merged.values()).sort((a, b) => b.lastUsedAt - a.lastUsedAt);
+        writeLocalSavedAccounts(combined);
+        setSwitchAccountsList(combined);
+      }
+    } catch {
+      // يكتفي بالقائمة المحلية
+    }
+  };
+
+  const triggerOpenSwitchAccount = () => {
+    setSwitchManageMode(false);
+    setSwitchModalOpen(true);
+    void loadAccountsForSwitcher();
+    onOpenSwitchAccount?.();
+  };
+
+  useEffect(() => {
+    const handleEvent = () => {
+      triggerOpenSwitchAccount();
+    };
+    window.addEventListener('wasl-open-switch-account', handleEvent);
+    return () => {
+      window.removeEventListener('wasl-open-switch-account', handleEvent);
+    };
+  });
+
+  const handlePickAccountFromModal = async (acc: SwitchableAccount) => {
+    if (switchManageMode) return;
+    const now = Date.now();
+    hasOverrideRef.current = true;
+    setDisplayName(acc.name);
+    writePersistedName(acc.name);
+
+    const updatedList = [
+      { ...acc, lastUsedAt: now },
+      ...switchAccountsList.filter((item) => item.id !== acc.id),
+    ].sort((a, b) => b.lastUsedAt - a.lastUsedAt);
+    setSwitchAccountsList(updatedList);
+    writeLocalSavedAccounts(updatedList);
+
+    try {
+      await supabase.from('saved_accounts').upsert(
+        {
+          id: acc.id,
+          name: acc.name,
+          avatar: acc.avatar || null,
+          phone_or_email: acc.phoneOrEmail || null,
+          last_used_at: new Date(now).toISOString(),
+        },
+        { onConflict: 'id' }
+      );
+    } catch {
+      // تجاهل
+    }
+
+    setSwitchModalOpen(false);
+    onSelectTab('feed');
+  };
+
+  const handleDeleteAccountFromModal = async (id: string) => {
+    const filtered = switchAccountsList.filter((item) => item.id !== id);
+    setSwitchAccountsList(filtered);
+    writeLocalSavedAccounts(filtered);
+    try {
+      await supabase.from('saved_accounts').delete().eq('id', id);
+    } catch {
+      // تجاهل
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -619,6 +772,18 @@ export function WaslHeaderBar({
                 id: uid,
                 full_name: cleanedName,
                 updated_at: new Date().toISOString(),
+              },
+              { onConflict: 'id' }
+            );
+          await supabase
+            .from('saved_accounts')
+            .upsert(
+              {
+                id: uid,
+                owner_id: uid,
+                name: cleanedName,
+                avatar: userAvatar || null,
+                last_used_at: new Date().toISOString(),
               },
               { onConflict: 'id' }
             );
@@ -1424,7 +1589,7 @@ export function WaslHeaderBar({
       {/* القائمة الجانبية عند الضغط على ☰ */}
       {drawerOpen && (
         <div className="fixed inset-0 z-50 flex justify-start bg-black/65 backdrop-blur-xs">
-          <div className="w-80 max-w-[85vw] h-full overflow-y-auto bg-slate-900 border-l border-purple-500/25 p-4 flex flex-col justify-between shadow-2xl space-y-4">
+          <div className="w-80 max-w-[85vw] h-full overflow-y-auto bg-slate-900 border-l border-purple-500/25 p-4 flex flex-col justify-between gap-4 shadow-2xl">
             <div className="space-y-3">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="min-w-0">
@@ -1476,19 +1641,17 @@ export function WaslHeaderBar({
                   <span>👤</span>
                 </button>
 
-                {onOpenSwitchAccount && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDrawerOpen(false);
-                      onOpenSwitchAccount();
-                    }}
-                    className="w-full flex items-center justify-between rounded-xl bg-slate-950/80 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-100 hover:border-purple-500/40 transition"
-                  >
-                    <span>تبديل الحساب</span>
-                    <span>⇄</span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDrawerOpen(false);
+                    triggerOpenSwitchAccount();
+                  }}
+                  className="w-full flex items-center justify-between rounded-xl bg-slate-950/80 border border-purple-500/35 px-3.5 py-2.5 text-xs font-bold text-cyan-200 hover:border-cyan-400/60 transition"
+                >
+                  <span>تبديل الحساب</span>
+                  <span>⇄</span>
+                </button>
               </div>
 
               <div className="rounded-2xl border border-purple-500/20 bg-slate-950/75 overflow-hidden">
@@ -1561,23 +1724,149 @@ export function WaslHeaderBar({
                   </div>
                 )}
               </div>
-            </div>
 
-            {onLogout && (
               <button
                 type="button"
                 onClick={() => {
                   setDrawerOpen(false);
-                  onLogout();
+                  if (onLogout) {
+                    onLogout();
+                  } else {
+                    void supabase.auth.signOut();
+                  }
                 }}
-                className="w-full rounded-xl border border-rose-500/30 bg-rose-950/30 py-2.5 text-xs font-bold text-rose-300 hover:bg-rose-950/50 transition"
+                className="shrink-0 w-full flex items-center justify-between rounded-xl border border-rose-500/35 bg-rose-950/35 px-3.5 py-2.5 text-xs font-bold text-rose-300 hover:bg-rose-950/55 transition"
               >
-                تسجيل الخروج
+                <span>تسجيل الخروج</span>
+                <span>🚪</span>
               </button>
-            )}
+            </div>
           </div>
 
           <div className="flex-1" onClick={() => setDrawerOpen(false)} />
+        </div>
+      )}
+
+      {/* نافذة تبديل الحساب المفعّلة */}
+      {switchModalOpen && (
+        <div
+          dir="rtl"
+          className="fixed inset-0 z-[70] flex flex-col justify-between bg-[#18191a] text-[#e4e6eb] overflow-y-auto"
+        >
+          <div className="sticky top-0 z-10 flex items-center justify-between bg-[#18191a]/95 backdrop-blur px-4 pt-4 pb-2">
+            <button
+              type="button"
+              onClick={() => setSwitchModalOpen(false)}
+              aria-label="إغلاق"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-slate-300 hover:bg-white/10 transition"
+            >
+              <X size={20} />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSwitchManageMode((prev) => !prev)}
+              aria-label="إدارة الحسابات المحفوظة"
+              className={`flex h-9 w-9 items-center justify-center rounded-full transition ${
+                switchManageMode
+                  ? 'bg-cyan-500/20 text-cyan-300'
+                  : 'text-slate-200 hover:bg-white/10'
+              }`}
+            >
+              <MoreHorizontal size={22} />
+            </button>
+          </div>
+
+          <div className="mx-auto w-full max-w-md flex-1 px-4 py-3 space-y-3">
+            {switchManageMode && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-950/30 px-3.5 py-2 text-center text-xs font-bold text-amber-200">
+                اختر أي حساب لإزالته
+              </div>
+            )}
+
+            {switchAccountsList.length === 0 ? (
+              <div className="rounded-2xl border border-white/10 bg-[#242526] p-8 text-center space-y-2">
+                <p className="text-sm font-bold text-white">لا توجد حسابات محفوظة بعد</p>
+                <p className="text-xs text-slate-400">
+                  سيتم حفظ الحسابات في Supabase للدخول السريع.
+                </p>
+              </div>
+            ) : (
+              switchAccountsList.map((acc) => (
+                <div
+                  key={acc.id}
+                  onClick={() => void handlePickAccountFromModal(acc)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') void handlePickAccountFromModal(acc);
+                  }}
+                  className="flex items-center justify-between rounded-2xl border border-white/15 bg-[#242526] px-4 py-3.5 shadow-sm hover:bg-[#2d2f31] active:scale-[0.99] transition cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    {acc.avatar ? (
+                      <img
+                        src={acc.avatar}
+                        alt={acc.name}
+                        className="h-12 w-12 shrink-0 rounded-full object-cover border border-white/15"
+                      />
+                    ) : (
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#3a3b3c] text-lg font-black text-slate-200">
+                        {acc.name.slice(0, 1)}
+                      </div>
+                    )}
+                    <span className="truncate text-sm font-bold text-white">{acc.name}</span>
+                  </div>
+
+                  {switchManageMode ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleDeleteAccountFromModal(acc.id);
+                      }}
+                      aria-label={`إزالة ${acc.name}`}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 transition"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  ) : (
+                    <ChevronLeft size={20} className="shrink-0 text-slate-400" />
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="mx-auto w-full max-w-md px-4 pt-3 pb-6 space-y-3">
+            <button
+              type="button"
+              onClick={() => {
+                setSwitchModalOpen(false);
+                if (onLogout) onLogout();
+                else void supabase.auth.signOut();
+              }}
+              className="w-full rounded-full bg-[#2d2f31] py-3 text-xs font-extrabold text-white hover:bg-[#383a3d] transition"
+            >
+              استخدام ملف شخصي آخر
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSwitchModalOpen(false);
+                if (onLogout) onLogout();
+                else void supabase.auth.signOut();
+              }}
+              className="w-full rounded-full border border-[#3b82f6] bg-transparent py-3 text-xs font-extrabold text-[#4599FF] hover:bg-[#3b82f6]/10 transition"
+            >
+              إنشاء حساب جديد
+            </button>
+
+            <div className="pt-2 text-center">
+              <span className="text-xs font-black tracking-wide text-slate-400">وِصل</span>
+            </div>
+          </div>
         </div>
       )}
 
