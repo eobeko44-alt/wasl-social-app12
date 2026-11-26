@@ -108,6 +108,20 @@ export function useAppStore() {
     ]);
   }, []);
 
+  const addPost = useCallback((newPost: Post | Record<string, any>) => {
+    const normalized: Post = {
+      id: String(newPost.id || nextId()),
+      author: newPost.author || sharedProfile,
+      text: String(newPost.text ?? newPost.content ?? ''),
+      imageUrl: newPost.imageUrl || newPost.image,
+      createdAt: String(newPost.createdAt || 'الآن'),
+      likes: Number(newPost.likes ?? 0),
+      likedByMe: Boolean(newPost.likedByMe ?? false),
+      comments: Array.isArray(newPost.comments) ? newPost.comments : [],
+    };
+    setPosts((prev) => (prev.some((p) => p.id === normalized.id) ? prev : [normalized, ...prev]));
+  }, []);
+
   const sendMessage = useCallback((conversationId: string, text: string) => {
     setConversations((prev) =>
       prev.map((c) =>
@@ -169,6 +183,7 @@ export function useAppStore() {
     toggleLike,
     addComment,
     createPost,
+    addPost,
     sendMessage,
     openConversation,
     startConversationWith,
