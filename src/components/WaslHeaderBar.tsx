@@ -119,6 +119,25 @@ const SWATCH_COLORS: Record<string, string> = {
   light: 'bg-white',
 };
 
+function readSavedProfileMeta() {
+  try {
+    const raw = localStorage.getItem('wasl_profile_meta_v3');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        name: typeof parsed?.name === 'string' && parsed.name.trim() ? parsed.name.trim() : '',
+        username:
+          typeof parsed?.username === 'string' && parsed.username.trim()
+            ? parsed.username.trim()
+            : '',
+      };
+    }
+  } catch {
+    // تجاهل خطأ القراءة
+  }
+  return { name: '', username: '' };
+}
+
 export function WaslHeaderBar({
   activeTab,
   onSelectTab,
@@ -142,19 +161,31 @@ export function WaslHeaderBar({
   const [searchQuery, setSearchQuery] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const [displayName, setDisplayName] = useState<string>(currentUserName);
-  const [displayHandle, setDisplayHandle] = useState<string>(
-    currentUserHandle.startsWith('@') ? currentUserHandle : `@${currentUserHandle}`
+  const initialMeta = readSavedProfileMeta();
+
+  const [displayName, setDisplayName] = useState<string>(
+    initialMeta.name || currentUserName
   );
+  const [displayHandle, setDisplayHandle] = useState<string>(() => {
+    const rawH = initialMeta.username || currentUserHandle;
+    return rawH.startsWith('@') ? rawH : `@${rawH}`;
+  });
 
   useEffect(() => {
-    setDisplayName(currentUserName);
+    const meta = readSavedProfileMeta();
+    if (meta.name) {
+      setDisplayName(meta.name);
+    } else if (currentUserName) {
+      setDisplayName(currentUserName);
+    }
   }, [currentUserName]);
 
   useEffect(() => {
-    setDisplayHandle(
-      currentUserHandle.startsWith('@') ? currentUserHandle : `@${currentUserHandle}`
-    );
+    const meta = readSavedProfileMeta();
+    const rawH = meta.username || currentUserHandle;
+    if (rawH) {
+      setDisplayHandle(rawH.startsWith('@') ? rawH : `@${rawH}`);
+    }
   }, [currentUserHandle]);
 
   const [editDetailsOpen, setEditDetailsOpen] = useState(false);
@@ -245,8 +276,11 @@ export function WaslHeaderBar({
   };
 
   const openEditDetailsModal = () => {
-    setEditNameInput(displayName);
-    setEditHandleInput(displayHandle.replace(/^@/, ''));
+    const meta = readSavedProfileMeta();
+    const currentN = meta.name || displayName;
+    const currentH = (meta.username || displayHandle).replace(/^@+/, '');
+    setEditNameInput(currentN);
+    setEditHandleInput(currentH);
     setEditDetailsOpen(true);
   };
 
@@ -273,6 +307,7 @@ export function WaslHeaderBar({
           JSON.stringify({
             ...prevMeta,
             name: cleanedName,
+            full_name: cleanedName,
             username: formattedHandle,
           })
         );
@@ -297,7 +332,7 @@ export function WaslHeaderBar({
       }
 
       setEditDetailsOpen(false);
-      showTempNotice('تم تحديث الاسم والمعرف بنجاح');
+      showTempNotice('تم حفظ الاسم والمعرف وثبتوا بنجاح');
     } finally {
       setSavingDetails(false);
     }
