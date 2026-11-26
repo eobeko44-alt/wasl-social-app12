@@ -133,15 +133,30 @@ export default function FeedTab() {
   const mapCloudRowToPost = (row: CloudPostRecord): Record<string, any> => {
     const textBody = row.content ? String(row.content) : row.headline ? String(row.headline) : '';
     const imgUrl = row.image_url ? String(row.image_url) : undefined;
+    const authorNameStr = String(row.author_name || 'مستخدم وصل');
+    const rawUser = String(row.author_handle || '@wasl_user');
+    const authorHandleStr = rawUser.startsWith('@') ? rawUser : `@${rawUser}`;
+
     return {
       id: `cloud-${String(row.id)}`,
       dbId: String(row.id),
       userId: row.user_id || undefined,
-      authorName: String(row.author_name || 'مستخدم وصل'),
-      authorHandle: String(row.author_handle || '@wasl_user'),
+      author: {
+        id: String(row.user_id || row.id),
+        name: authorNameStr,
+        username: authorHandleStr,
+        avatar: '',
+        isOnline: false,
+      },
+      authorName: authorNameStr,
+      authorHandle: authorHandleStr,
+      text: textBody,
       content: textBody,
       image: imgUrl,
       imageUrl: imgUrl,
+      likes: 0,
+      likedByMe: false,
+      comments: [],
       createdAt: row.created_at
         ? new Date(String(row.created_at)).toLocaleDateString('ar')
         : 'الآن',
@@ -287,11 +302,22 @@ export default function FeedTab() {
       const localPost: Record<string, any> = {
         id: inserted?.id ? `cloud-${String(inserted.id)}` : `local-feed-${Date.now()}`,
         dbId: inserted?.id ? String(inserted.id) : undefined,
+        author: {
+          id: userId || 'me',
+          name: displayName,
+          username: displayHandle,
+          avatar: currentProfile.avatar || '',
+          isOnline: true,
+        },
         authorName: displayName,
         authorHandle: displayHandle,
+        text: trimmed,
         content: trimmed,
         image: finalImageUrl,
         imageUrl: finalImageUrl,
+        likes: 0,
+        likedByMe: false,
+        comments: [],
         createdAt: 'الآن',
       };
 
