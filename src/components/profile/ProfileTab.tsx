@@ -176,7 +176,7 @@ async function saveAllPersistence(data: PersistedProfileData): Promise<void> {
   try {
     localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(posts));
   } catch {
-    // IndexedDB يغطي الحجم الكبير بدون قيود
+    // تجاهل
   }
 
   await saveToIndexedDB(data);
@@ -318,6 +318,42 @@ export default function ProfileTab() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const highlightInputRef = useRef<HTMLInputElement | null>(null);
 
+  // حفظ بيانات الملف الشخصي (الصورة الشخصية، الغلاف، والنبذة/التفاصيل) في جدول profiles بـ Supabase
+  async function syncProfileToSupabase(overrides?: {
+    avatar_url?: string;
+    cover_url?: string;
+    bio?: string;
+    city?: string;
+    hometown?: string;
+    birthday?: string;
+    education?: string;
+  }): Promise<void> {
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const userId = userData?.user?.id;
+      if (!userId) return;
+
+      await supabase.from('profiles').upsert(
+        {
+          id: userId,
+          full_name: displayName,
+          username: displayHandle,
+          avatar_url: overrides?.avatar_url !== undefined ? overrides.avatar_url : avatarImage || null,
+          cover_url: overrides?.cover_url !== undefined ? overrides.cover_url : coverImage || null,
+          bio: overrides?.bio !== undefined ? overrides.bio : bio,
+          city: overrides?.city !== undefined ? overrides.city : city,
+          hometown: overrides?.hometown !== undefined ? overrides.hometown : hometown,
+          birthday: overrides?.birthday !== undefined ? overrides.birthday : birthday,
+          education: overrides?.education !== undefined ? overrides.education : education,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      );
+    } catch {
+      // يظل الحفظ المحلي شغالاً
+    }
+  }
+
   useEffect(() => {
     let active = true;
 
@@ -370,10 +406,33 @@ export default function ProfileTab() {
       }
 
       try {
-        const { data: supaPosts, error } = await supabase
-          .from('posts')
-          .select('*')
-          .order('created_at', { ascending: false });
+        const { data: userData } = await supabase.auth.getUser();
+        const userId = userData?.user?.id;
+
+        if (active && userId) {
+          const { data: remoteProfile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .maybeSingle();
+
+          if (remoteProfile) {
+            if (remoteProfile.avatar_url) setAvatarImage(String(remoteProfile.avatar_url));
+            if (remoteProfile.cover_url) setCoverImage(String(remoteProfile.cover_url));
+            if (remoteProfile.bio) setBio(String(remoteProfile.bio));
+            if (remoteProfile.city) setCity(String(remoteProfile.city));
+            if (remoteProfile.hometown) setHometown(String(remoteProfile.hometown));
+            if (remoteProfile.birthday) setBirthday(String(remoteProfile.birthday));
+            if (remoteProfile.education) setEducation(String(remoteProfile.education));
+          }
+        }
+
+        let postsQuery = supabase.from('posts').select('*').order('created_at', { ascending: false });
+        if (userId) {
+          postsQuery = postsQuery.eq('user_id', userId);
+        }
+
+        const { data: supaPosts, error } = await postsQuery;
 
         if (active && !error && Array.isArray(supaPosts) && supaPosts.length > 0) {
           const mappedRemote: ActivityPostItem[] = supaPosts.map((row: Record<string, any>) => {
@@ -596,6 +655,7 @@ export default function ProfileTab() {
     if (typeof store.updateProfile === 'function') {
       store.updateProfile({ coverImage: imageUrl, cover: imageUrl });
     }
+    await syncProfileToSupabase({ cover_url: imageUrl });
     await pushActivityPost({
       id: `cover-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       authorName: displayName,
@@ -618,6 +678,7 @@ export default function ProfileTab() {
     if (typeof store.updateProfile === 'function') {
       store.updateProfile({ avatar: imageUrl });
     }
+    await syncProfileToSupabase({ avatar_url: imageUrl });
     await pushActivityPost({
       id: `avatar-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       authorName: displayName,
@@ -656,7 +717,7 @@ export default function ProfileTab() {
     });
   };
 
-  const handleSaveDetails = (e: React.FormEvent) => {
+  const handleSaveDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     if (typeof store.updateProfile === 'function') {
       store.updateProfile({
@@ -669,6 +730,13 @@ export default function ProfileTab() {
         isPublic: isPublicAccount,
       });
     }
+    await syncProfileToSupabase({
+      bio: bio.trim(),
+      city: city.trim(),
+      hometown: hometown.trim(),
+      birthday: birthday.trim(),
+      education: education.trim(),
+    });
     setEditingDetails(false);
   };
 
