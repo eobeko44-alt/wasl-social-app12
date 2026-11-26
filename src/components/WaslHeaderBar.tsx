@@ -1,4 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
+import {
+  ArrowRight,
+  Image as ImageIcon,
+  Music,
+  UserPlus,
+  MapPin,
+  Smile,
+  MessageCircle,
+  Calendar,
+  Video,
+  ChevronLeft,
+  X,
+} from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
 export type WaslTabKey = 'feed' | 'chats' | 'contacts' | 'profile';
 
@@ -35,9 +49,66 @@ interface WaslHeaderBarProps {
   onLogout?: () => void;
 }
 
+const MEDIA_BUCKET = 'wasl-media';
 const PRIVACY_STORAGE_KEY = 'wasl_account_is_public_v1';
 const DARK_MODE_STORAGE_KEY = 'wasl_dark_mode_v1';
 const LANG_STORAGE_KEY = 'wasl_lang_v1';
+
+const BG_THEMES = [
+  { id: 'none', label: 'افتراضي', className: 'bg-transparent text-white' },
+  {
+    id: 'sunset',
+    label: 'غروب',
+    className:
+      'bg-gradient-to-br from-amber-500 via-orange-500 to-pink-600 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
+  },
+  {
+    id: 'violet',
+    label: 'بنفسجي',
+    className:
+      'bg-gradient-to-br from-purple-500 to-indigo-600 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
+  },
+  {
+    id: 'berry',
+    label: 'توتي',
+    className:
+      'bg-gradient-to-br from-pink-600 via-rose-600 to-purple-700 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
+  },
+  {
+    id: 'dark',
+    label: 'داكن',
+    className:
+      'bg-slate-950 text-white rounded-2xl p-4 min-h-[135px] flex items-center border border-slate-700',
+  },
+  {
+    id: 'crimson',
+    label: 'قرمزي',
+    className:
+      'bg-gradient-to-br from-rose-600 to-red-700 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
+  },
+  {
+    id: 'neon',
+    label: 'نيون',
+    className:
+      'bg-gradient-to-br from-fuchsia-600 to-purple-700 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
+  },
+  {
+    id: 'light',
+    label: 'أبيض',
+    className: 'bg-white text-slate-900 rounded-2xl p-4 min-h-[135px] flex items-center',
+  },
+];
+
+const SWATCH_COLORS: Record<string, string> = {
+  none: 'bg-slate-800 border border-slate-600',
+  sunset: 'bg-gradient-to-tr from-amber-500 to-pink-500',
+  violet: 'bg-purple-500',
+  berry: 'bg-gradient-to-tr from-pink-600 to-purple-700',
+  dark: 'bg-black border border-slate-600',
+  crimson: 'bg-rose-600',
+  neon: 'bg-fuchsia-600',
+  light: 'bg-white',
+};
 
 export function WaslHeaderBar({
   activeTab,
@@ -62,11 +133,9 @@ export function WaslHeaderBar({
   const [searchQuery, setSearchQuery] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // فتح وطي قائمة "الإعدادات والخصوصية" داخل القائمة الجانبية
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(true);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
 
-  // خصوصية الحساب
   const [isPublicAccount, setIsPublicAccount] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem(PRIVACY_STORAGE_KEY);
@@ -82,7 +151,6 @@ export function WaslHeaderBar({
     return true;
   });
 
-  // الوضع المظلم
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem(DARK_MODE_STORAGE_KEY);
@@ -93,7 +161,6 @@ export function WaslHeaderBar({
     return true;
   });
 
-  // اللغة
   const [language, setLanguage] = useState<'ar' | 'en'>(() => {
     try {
       const saved = localStorage.getItem(LANG_STORAGE_KEY);
@@ -139,19 +206,22 @@ export function WaslHeaderBar({
     }
   }, [language]);
 
-  // حالة القصص + معرض الصور للقصة
   const [storyModalOpen, setStoryModalOpen] = useState(false);
   const [storyText, setStoryText] = useState('');
   const [storyImageData, setStoryImageData] = useState<string>('');
   const [storyFileName, setStoryFileName] = useState<string>('');
   const storyFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // حالة المنشورات + معرض الصور للمنشور
   const [postModalOpen, setPostModalOpen] = useState(false);
   const [postText, setPostText] = useState('');
+  const [selectedTheme, setSelectedTheme] = useState<string>('none');
+  const [activeExtraType, setActiveExtraType] = useState<string | null>(null);
+  const [extraValue, setExtraValue] = useState('');
   const [postImageData, setPostImageData] = useState<string>('');
-  const [postFileName, setPostFileName] = useState<string>('');
+  const [postSelectedFile, setPostSelectedFile] = useState<File | null>(null);
+  const [publishingPost, setPublishingPost] = useState(false);
   const postFileInputRef = useRef<HTMLInputElement | null>(null);
+  const themeStripRef = useRef<HTMLDivElement | null>(null);
 
   const normalizedQuery = searchQuery.trim().toLowerCase().replace(/^@/, '');
   const filteredFriends = normalizedQuery
@@ -224,11 +294,12 @@ export function WaslHeaderBar({
   const handlePickPostImage = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setPostFileName(file.name);
+    setPostSelectedFile(file);
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
         setPostImageData(reader.result);
+        setSelectedTheme('none');
         setPostModalOpen(true);
       }
     };
@@ -238,21 +309,176 @@ export function WaslHeaderBar({
   const resetPostModal = () => {
     setPostText('');
     setPostImageData('');
-    setPostFileName('');
+    setPostSelectedFile(null);
+    setSelectedTheme('none');
+    setActiveExtraType(null);
+    setExtraValue('');
     if (postFileInputRef.current) postFileInputRef.current.value = '';
     setPostModalOpen(false);
   };
 
-  const handlePostSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!postText.trim() && !postImageData) return;
-    onCreatePostSubmit?.(postText.trim(), postImageData || undefined);
-    resetPostModal();
+  const buildFinalPostContent = (): string => {
+    const main = postText.trim();
+    const detail = extraValue.trim();
+    if (!activeExtraType || !detail) return main;
+
+    const prefixMap: Record<string, string> = {
+      music: '🎵 يستمع إلى:',
+      tag: '👥 مع:',
+      location: '📍 في:',
+      feeling: '😊 يشعر بـ:',
+      messages: '💬 رسالة:',
+      event: '📅 مناسبة:',
+      live: '🔴 بث:',
+    };
+    const prefix = prefixMap[activeExtraType] || '';
+    const extraLine = `${prefix} ${detail}`.trim();
+    return main ? `${main}\n${extraLine}` : extraLine;
+  };
+
+  const uploadPostImageToStorage = async (file: File, fallbackUrl: string): Promise<string> => {
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const uid = userData?.user?.id || 'guest';
+      const ext = (file.name.split('.').pop() || 'jpg').replace(/[^a-zA-Z0-9]/g, '');
+      const path = `posts/${uid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext || 'jpg'}`;
+
+      const { error } = await supabase.storage
+        .from(MEDIA_BUCKET)
+        .upload(path, file, { upsert: false });
+
+      if (error) return fallbackUrl;
+
+      const { data: publicInfo } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(path);
+      return publicInfo?.publicUrl || fallbackUrl;
+    } catch {
+      return fallbackUrl;
+    }
+  };
+
+  const handlePublishPostModal = async () => {
+    const finalContent = buildFinalPostContent();
+    if ((!finalContent && !postImageData) || publishingPost) return;
+
+    setPublishingPost(true);
+    try {
+      let finalImageUrl: string | undefined = postImageData || undefined;
+      if (postSelectedFile && postImageData) {
+        finalImageUrl = await uploadPostImageToStorage(postSelectedFile, postImageData);
+      }
+
+      const normalizedHandle = currentUserHandle.startsWith('@')
+        ? currentUserHandle
+        : `@${currentUserHandle}`;
+
+      const { data: userData } = await supabase.auth.getUser();
+      const userId = userData?.user?.id ?? null;
+
+      await supabase.from('posts').insert({
+        user_id: userId,
+        author_name: currentUserName,
+        author_handle: normalizedHandle,
+        headline: finalImageUrl ? `نشر ${currentUserName} صورة` : `نشر ${currentUserName}`,
+        content: finalContent || null,
+        image_url: finalImageUrl || null,
+        kind: finalImageUrl ? 'photo' : 'post',
+      });
+
+      onCreatePostSubmit?.(finalContent, finalImageUrl);
+      resetPostModal();
+    } finally {
+      setPublishingPost(false);
+    }
+  };
+
+  const canSubmitPost = Boolean(buildFinalPostContent() || postImageData) && !publishingPost;
+  const activeThemeObj = BG_THEMES.find((t) => t.id === selectedTheme) || BG_THEMES[0];
+  const isLightTheme = selectedTheme === 'light';
+
+  const composerOptions = [
+    {
+      id: 'media',
+      label: 'صور/مقاطع فيديو',
+      icon: <ImageIcon size={18} className="text-emerald-400" />,
+      onClick: openPostGallery,
+    },
+    {
+      id: 'music',
+      label: 'الموسيقى',
+      icon: <Music size={18} className="text-pink-400" />,
+      onClick: () => {
+        setActiveExtraType('music');
+        setExtraValue('');
+      },
+    },
+    {
+      id: 'tag',
+      label: 'إشارة إلى الأشخاص',
+      icon: <UserPlus size={18} className="text-sky-400" />,
+      onClick: () => {
+        setActiveExtraType('tag');
+        setExtraValue('');
+      },
+    },
+    {
+      id: 'location',
+      label: 'إضافة موقع',
+      icon: <MapPin size={18} className="text-rose-400" />,
+      onClick: () => {
+        setActiveExtraType('location');
+        setExtraValue('');
+      },
+    },
+    {
+      id: 'feeling',
+      label: 'شعور/نشاط',
+      icon: <Smile size={18} className="text-amber-400" />,
+      onClick: () => {
+        setActiveExtraType('feeling');
+        setExtraValue('');
+      },
+    },
+    {
+      id: 'messages',
+      label: 'تلقى الرسائل',
+      icon: <MessageCircle size={18} className="text-blue-400" />,
+      onClick: () => {
+        setActiveExtraType('messages');
+        setExtraValue('مفتوح للرسائل');
+      },
+    },
+    {
+      id: 'event',
+      label: 'إنشاء مناسبة',
+      icon: <Calendar size={18} className="text-red-400" />,
+      onClick: () => {
+        setActiveExtraType('event');
+        setExtraValue('');
+      },
+    },
+    {
+      id: 'live',
+      label: 'بث مباشر',
+      icon: <Video size={18} className="text-rose-500" />,
+      onClick: () => {
+        setActiveExtraType('live');
+        setExtraValue('مباشر الآن');
+      },
+    },
+  ];
+
+  const extraPlaceholderMap: Record<string, string> = {
+    music: 'اكتب اسم الأغنية أو الفنان...',
+    tag: 'اكتب اسم الشخص للإشارة إليه...',
+    location: 'اكتب المدينة أو المكان...',
+    feeling: 'اكتب شعورك أو نشاطك الحالي...',
+    messages: 'اكتب ملاحظة حول استقبال الرسائل...',
+    event: 'اكتب اسم المناسبة أو موعدها...',
+    live: 'اكتب عنوان البث المباشر...',
   };
 
   return (
     <div dir="rtl" className="w-full bg-slate-950 text-slate-100 select-none">
-      {/* مدخلات المعرض المخفية */}
       <input
         ref={storyFileInputRef}
         type="file"
@@ -532,78 +758,194 @@ export function WaslHeaderBar({
         </>
       )}
 
-      {/* نافذة إنشاء منشور */}
+      {/* نافذة إنشاء منشور بالشكل الجديد */}
       {postModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-          <form
-            onSubmit={handlePostSave}
-            className="w-full max-w-sm rounded-2xl border border-purple-500/30 bg-slate-900 p-4 space-y-3 shadow-2xl"
-          >
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <h3 className="text-sm font-black text-white">إنشاء منشور</h3>
-              <button
-                type="button"
-                onClick={resetPostModal}
-                className="text-xs text-slate-400 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-xs p-0 sm:p-4">
+          <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#1c1d21] text-white shadow-2xl flex flex-col justify-between">
+            <div>
+              {/* الهيدر العلوي */}
+              <div className="flex items-center justify-between border-b border-white/10 bg-[#242529] px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={resetPostModal}
+                    aria-label="رجوع"
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-slate-200 hover:bg-white/10 transition"
+                  >
+                    <ArrowRight size={18} />
+                  </button>
+                  <span className="text-sm font-bold text-white">إنشاء منشور</span>
+                </div>
 
-            <textarea
-              rows={3}
-              value={postText}
-              onChange={(e) => setPostText(e.target.value)}
-              placeholder="اكتب كلامك هنا..."
-              className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
-            />
+                <button
+                  type="button"
+                  onClick={() => void handlePublishPostModal()}
+                  disabled={!canSubmitPost}
+                  className={`rounded-lg px-3 py-1 text-xs font-bold transition ${
+                    canSubmitPost
+                      ? 'bg-[#1877F2] text-white hover:bg-[#166fe5]'
+                      : 'text-slate-500 cursor-not-allowed'
+                  }`}
+                >
+                  {publishingPost ? 'جاري...' : 'نشر'}
+                </button>
+              </div>
 
-            <button
-              type="button"
-              onClick={openPostGallery}
-              className="w-full flex items-center justify-between rounded-xl border border-dashed border-cyan-500/40 bg-slate-950/90 px-3.5 py-2.5 text-xs font-bold text-cyan-300 hover:bg-slate-950 transition"
-            >
-              <span>{postFileName ? `الصورة: ${postFileName}` : 'إضافة صورة من المعرض (اختياري)'}</span>
-              <span>🖼️</span>
-            </button>
+              {/* معلومات الحساب والخصوصية */}
+              <div className="px-4 pt-3.5 pb-2">
+                <div className="flex items-center gap-3">
+                  {userAvatar ? (
+                    <img
+                      src={userAvatar}
+                      alt={currentUserName}
+                      className="h-11 w-11 shrink-0 rounded-full border border-white/15 object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-800 text-sm font-bold text-white border border-white/15">
+                      {currentUserName.slice(0, 1)}
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-sm font-bold text-white leading-tight">{currentUserName}</p>
+                    <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-white/15 bg-[#2a2b30] px-2 py-0.5 text-[11px] font-semibold text-slate-200">
+                      <span>{isPublicAccount ? 'العامة' : 'خاص'}</span>
+                      <span>▾</span>
+                    </div>
+                  </div>
+                </div>
 
-            {postImageData && (
-              <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
-                <img
-                  src={postImageData}
-                  alt={postFileName || 'صورة المنشور'}
-                  className="h-40 w-full object-cover"
-                />
+                {/* مساحة الكتابة */}
+                <div className="mt-3.5">
+                  <textarea
+                    rows={selectedTheme === 'none' ? 3 : 4}
+                    value={postText}
+                    onChange={(e) => setPostText(e.target.value)}
+                    placeholder="شارك لحظة بارزة من يومك..."
+                    className={`w-full resize-none outline-none transition ${
+                      selectedTheme === 'none'
+                        ? 'bg-transparent text-base text-white placeholder:text-slate-400'
+                        : `${activeThemeObj.className} text-center text-lg font-bold ${
+                            isLightTheme ? 'placeholder:text-slate-500' : 'placeholder:text-white/75'
+                          }`
+                    }`}
+                  />
+                </div>
+
+                {activeExtraType && (
+                  <div className="mt-2 flex items-center gap-2 rounded-xl border border-white/10 bg-[#2a2b30] px-3 py-2">
+                    <input
+                      type="text"
+                      value={extraValue}
+                      onChange={(e) => setExtraValue(e.target.value)}
+                      placeholder={extraPlaceholderMap[activeExtraType] || 'أدخل التفاصيل...'}
+                      className="flex-1 bg-transparent text-xs text-white placeholder:text-slate-400 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveExtraType(null);
+                        setExtraValue('');
+                      }}
+                      aria-label="إغلاق الإضافة"
+                      className="text-slate-400 hover:text-white"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+
+                {postImageData && (
+                  <div className="mt-3 relative">
+                    <img
+                      src={postImageData}
+                      alt="معاينة الصورة"
+                      className="max-h-56 w-full rounded-xl object-cover border border-white/10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPostImageData('');
+                        setPostSelectedFile(null);
+                        if (postFileInputRef.current) postFileInputRef.current.value = '';
+                      }}
+                      className="mt-1.5 rounded-lg bg-rose-950/70 border border-rose-500/30 px-2.5 py-1 text-[11px] font-bold text-rose-200"
+                    >
+                      إزالة الصورة
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* شريط الألوان */}
+              <div className="flex items-center gap-2 border-t border-white/10 bg-[#242529]/80 px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => setPostText((prev) => `${prev}@`)}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#32343a] text-sm font-bold text-white hover:bg-[#3e4047]"
+                >
+                  @
+                </button>
+
+                <div
+                  ref={themeStripRef}
+                  className="flex flex-1 items-center gap-2 overflow-x-auto py-0.5"
+                >
+                  {BG_THEMES.map((theme) => {
+                    const active = selectedTheme === theme.id;
+                    return (
+                      <button
+                        key={theme.id}
+                        type="button"
+                        onClick={() => setSelectedTheme(theme.id)}
+                        aria-label={theme.label}
+                        className={`h-7 w-7 shrink-0 rounded-lg transition ${SWATCH_COLORS[theme.id]} ${
+                          active ? 'ring-2 ring-white scale-105' : 'opacity-90 hover:opacity-100'
+                        }`}
+                      />
+                    );
+                  })}
+                </div>
+
                 <button
                   type="button"
                   onClick={() => {
-                    setPostImageData('');
-                    setPostFileName('');
-                    if (postFileInputRef.current) postFileInputRef.current.value = '';
+                    themeStripRef.current?.scrollBy({ left: -120, behavior: 'smooth' });
                   }}
-                  className="absolute top-2 left-2 rounded-lg bg-slate-950/85 px-2 py-1 text-[10px] font-bold text-rose-300 hover:text-rose-200"
+                  aria-label="المزيد من الألوان"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#32343a] text-slate-200 hover:bg-[#3e4047]"
                 >
-                  إزالة الصورة
+                  <ChevronLeft size={16} />
                 </button>
               </div>
-            )}
 
-            <div className="flex gap-2 pt-1">
+              {/* قائمة الخيارات */}
+              <div className="divide-y divide-white/5 border-t border-white/10 bg-[#1c1d21]">
+                {composerOptions.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={item.onClick}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-right text-xs font-semibold text-slate-100 hover:bg-white/5 transition"
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* زر النشر العريض في الأسفل */}
+            <div className="sticky bottom-0 bg-[#1c1d21] p-3 border-t border-white/10">
               <button
                 type="button"
-                onClick={resetPostModal}
-                className="flex-1 rounded-xl border border-slate-800 bg-slate-950 py-2 text-xs font-bold text-slate-300"
+                onClick={() => void handlePublishPostModal()}
+                disabled={!canSubmitPost}
+                className="w-full rounded-lg bg-[#1877F2] py-2.5 text-sm font-extrabold text-white shadow transition enabled:hover:bg-[#166fe5] enabled:active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45"
               >
-                إلغاء
-              </button>
-              <button
-                type="submit"
-                className="flex-1 rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2 text-xs font-bold text-white"
-              >
-                نشر
+                {publishingPost ? 'جاري النشر...' : 'نشر'}
               </button>
             </div>
-          </form>
+          </div>
         </div>
       )}
 
@@ -674,7 +1016,6 @@ export function WaslHeaderBar({
         <div className="fixed inset-0 z-50 flex justify-start bg-black/65 backdrop-blur-xs">
           <div className="w-80 max-w-[85vw] h-full overflow-y-auto bg-slate-900 border-l border-purple-500/25 p-4 flex flex-col justify-between shadow-2xl space-y-4">
             <div className="space-y-3">
-              {/* رأس القائمة */}
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-black text-white">{currentUserName}</p>
@@ -691,7 +1032,6 @@ export function WaslHeaderBar({
                 </button>
               </div>
 
-              {/* روابط سريعة */}
               <div className="space-y-1.5">
                 <button
                   type="button"
@@ -744,7 +1084,6 @@ export function WaslHeaderBar({
                 )}
               </div>
 
-              {/* زر الإعدادات والخصوصية والقائمة المنسدلة (الإعدادات - اللغة - الوضع المظلم) */}
               <div className="rounded-2xl border border-purple-500/20 bg-slate-950/75 overflow-hidden">
                 <button
                   type="button"
@@ -760,7 +1099,6 @@ export function WaslHeaderBar({
 
                 {settingsMenuOpen && (
                   <div className="border-t border-slate-800/90 p-2 space-y-1.5 bg-slate-950/90">
-                    {/* 1. الإعدادات */}
                     <button
                       type="button"
                       onClick={() => setAccountSettingsOpen((prev) => !prev)}
@@ -803,7 +1141,6 @@ export function WaslHeaderBar({
                       </div>
                     )}
 
-                    {/* 2. الوضع المظلم */}
                     <div className="flex items-center justify-between rounded-xl bg-slate-900/85 border border-slate-800 px-3 py-2.5">
                       <span className="flex items-center gap-2 text-xs font-bold text-slate-100">
                         <span>🌙</span>
@@ -825,7 +1162,6 @@ export function WaslHeaderBar({
                       </button>
                     </div>
 
-                    {/* 3. اللغة */}
                     <button
                       type="button"
                       onClick={() => setLanguage((prev) => (prev === 'ar' ? 'en' : 'ar'))}
