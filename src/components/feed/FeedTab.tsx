@@ -1,5 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Users, ImagePlus, Send, RefreshCw } from 'lucide-react';
+import {
+  Users,
+  ImagePlus,
+  Send,
+  RefreshCw,
+  ArrowRight,
+  Music,
+  UserPlus,
+  MapPin,
+  Smile,
+  MessageCircle,
+  Calendar,
+  Video,
+  ChevronLeft,
+  X,
+} from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { supabase } from '@/lib/supabase';
 import UserCard from '@/components/UserCard';
@@ -18,6 +33,62 @@ interface CloudPostRecord {
   kind?: string | null;
   created_at?: string | null;
 }
+
+const BG_THEMES = [
+  { id: 'none', label: 'افتراضي', className: 'bg-transparent text-white' },
+  {
+    id: 'sunset',
+    label: 'غروب',
+    className:
+      'bg-gradient-to-br from-amber-500 via-orange-500 to-pink-600 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
+  },
+  {
+    id: 'violet',
+    label: 'بنفسجي',
+    className:
+      'bg-gradient-to-br from-purple-500 to-indigo-600 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
+  },
+  {
+    id: 'berry',
+    label: 'توتي',
+    className:
+      'bg-gradient-to-br from-pink-600 via-rose-600 to-purple-700 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
+  },
+  {
+    id: 'dark',
+    label: 'داكن',
+    className:
+      'bg-slate-950 text-white rounded-2xl p-4 min-h-[135px] flex items-center border border-slate-700',
+  },
+  {
+    id: 'crimson',
+    label: 'قرمزي',
+    className:
+      'bg-gradient-to-br from-rose-600 to-red-700 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
+  },
+  {
+    id: 'neon',
+    label: 'نيون',
+    className:
+      'bg-gradient-to-br from-fuchsia-600 to-purple-700 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
+  },
+  {
+    id: 'light',
+    label: 'أبيض',
+    className: 'bg-white text-slate-900 rounded-2xl p-4 min-h-[135px] flex items-center',
+  },
+];
+
+const SWATCH_COLORS: Record<string, string> = {
+  none: 'bg-slate-800 border border-slate-600',
+  sunset: 'bg-gradient-to-tr from-amber-500 to-pink-500',
+  violet: 'bg-purple-500',
+  berry: 'bg-gradient-to-tr from-pink-600 to-purple-700',
+  dark: 'bg-black border border-slate-600',
+  crimson: 'bg-rose-600',
+  neon: 'bg-fuchsia-600',
+  light: 'bg-white',
+};
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve) => {
@@ -48,7 +119,11 @@ export default function FeedTab() {
   const displayHandle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
 
   const [cloudPosts, setCloudPosts] = useState<Array<Record<string, any>>>([]);
+  const [composerExpanded, setComposerExpanded] = useState(false);
   const [postText, setPostText] = useState('');
+  const [selectedTheme, setSelectedTheme] = useState<string>('none');
+  const [activeExtraType, setActiveExtraType] = useState<string | null>(null);
+  const [extraValue, setExtraValue] = useState('');
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>('');
   const [publishing, setPublishing] = useState(false);
@@ -56,6 +131,7 @@ export default function FeedTab() {
   const [statusNotice, setStatusNotice] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const themeStripRef = useRef<HTMLDivElement | null>(null);
 
   const mapCloudRowToPost = (row: CloudPostRecord): Record<string, any> => {
     const textBody = row.content ? String(row.content) : row.headline ? String(row.headline) : '';
@@ -131,6 +207,8 @@ export default function FeedTab() {
     const preview = await readFileAsDataUrl(file);
     setSelectedImageFile(file);
     setImagePreview(preview);
+    setSelectedTheme('none');
+    setComposerExpanded(true);
     e.target.value = '';
   };
 
@@ -154,9 +232,27 @@ export default function FeedTab() {
     }
   };
 
-  const handlePublishPost = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = postText.trim();
+  const buildFinalContent = (): string => {
+    const main = postText.trim();
+    const detail = extraValue.trim();
+    if (!activeExtraType || !detail) return main;
+
+    const prefixMap: Record<string, string> = {
+      music: '🎵 يستمع إلى:',
+      tag: '👥 مع:',
+      location: '📍 في:',
+      feeling: '😊 يشعر بـ:',
+      messages: '💬 رسالة:',
+      event: '📅 مناسبة:',
+      live: '🔴 بث:',
+    };
+    const prefix = prefixMap[activeExtraType] || '';
+    const extraLine = `${prefix} ${detail}`.trim();
+    return main ? `${main}\n${extraLine}` : extraLine;
+  };
+
+  const executePublish = async () => {
+    const trimmed = buildFinalContent();
     if ((!trimmed && !imagePreview) || publishing) return;
 
     setPublishing(true);
@@ -212,6 +308,10 @@ export default function FeedTab() {
       setPostText('');
       setSelectedImageFile(null);
       setImagePreview('');
+      setSelectedTheme('none');
+      setActiveExtraType(null);
+      setExtraValue('');
+      setComposerExpanded(false);
     } catch {
       setStatusNotice('تعذر نشر المنشور الآن');
     } finally {
@@ -220,6 +320,11 @@ export default function FeedTab() {
         setStatusNotice('');
       }, 2500);
     }
+  };
+
+  const handlePublishPost = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executePublish();
   };
 
   const mergedPosts = (() => {
@@ -236,6 +341,92 @@ export default function FeedTab() {
     return combined;
   })();
 
+  const canSubmit = Boolean(buildFinalContent() || imagePreview) && !publishing;
+  const activeThemeObj = BG_THEMES.find((t) => t.id === selectedTheme) || BG_THEMES[0];
+  const isLightTheme = selectedTheme === 'light';
+
+  const composerOptions = [
+    {
+      id: 'media',
+      label: 'صور/مقاطع فيديو',
+      icon: <ImagePlus size={18} className="text-emerald-400" />,
+      onClick: () => fileInputRef.current?.click(),
+    },
+    {
+      id: 'music',
+      label: 'الموسيقى',
+      icon: <Music size={18} className="text-pink-400" />,
+      onClick: () => {
+        setActiveExtraType('music');
+        setExtraValue('');
+      },
+    },
+    {
+      id: 'tag',
+      label: 'إشارة إلى الأشخاص',
+      icon: <UserPlus size={18} className="text-sky-400" />,
+      onClick: () => {
+        setActiveExtraType('tag');
+        setExtraValue('');
+      },
+    },
+    {
+      id: 'location',
+      label: 'إضافة موقع',
+      icon: <MapPin size={18} className="text-rose-400" />,
+      onClick: () => {
+        setActiveExtraType('location');
+        setExtraValue('');
+      },
+    },
+    {
+      id: 'feeling',
+      label: 'شعور/نشاط',
+      icon: <Smile size={18} className="text-amber-400" />,
+      onClick: () => {
+        setActiveExtraType('feeling');
+        setExtraValue('');
+      },
+    },
+    {
+      id: 'messages',
+      label: 'تلقى الرسائل',
+      icon: <MessageCircle size={18} className="text-blue-400" />,
+      onClick: () => {
+        setActiveExtraType('messages');
+        setExtraValue('مفتوح للرسائل');
+      },
+    },
+    {
+      id: 'event',
+      label: 'إنشاء مناسبة',
+      icon: <Calendar size={18} className="text-red-400" />,
+      onClick: () => {
+        setActiveExtraType('event');
+        setExtraValue('');
+      },
+    },
+    {
+      id: 'live',
+      label: 'بث مباشر',
+      icon: <Video size={18} className="text-rose-500" />,
+      onClick: () => {
+        setActiveExtraType('live');
+        setExtraValue('مباشر الآن');
+      },
+    },
+  ];
+
+  const extraPlaceholderMap: Record<string, string> = {
+    music: 'اكتب اسم الأغنية أو الفنان...',
+    tag: 'اكتب اسم الشخص للإشارة إليه...',
+    location: 'اكتب المدينة أو المكان...',
+    feeling: 'اكتب شعورك أو نشاطك الحالي...',
+    messages: 'اكتب ملاحظة حول استقبال الرسائل...',
+    event: 'اكتب اسم المناسبة أو موعدها...',
+    live: 'اكتب عنوان البث المباشر...',
+  };
+
   return (
     <div dir="rtl" className="mx-auto max-w-2xl space-y-5 pb-6">
       <input
@@ -246,76 +437,250 @@ export default function FeedTab() {
         className="hidden"
       />
 
-      {/* صندوق نشر منشور جديد */}
-      <form
-        onSubmit={(e) => void handlePublishPost(e)}
-        className="rounded-2xl border border-purple-500/20 bg-slate-900/80 p-4 space-y-3"
-      >
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-black text-white">إنشاء منشور في العام</span>
-          <button
-            type="button"
-            onClick={() => void fetchGlobalPosts(true)}
-            disabled={refreshing}
-            className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/80 px-2.5 py-1 text-[11px] font-bold text-cyan-300 hover:border-cyan-500/40 transition"
-          >
-            <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
-            <span>تحديث</span>
-          </button>
-        </div>
+      {!composerExpanded ? (
+        <form
+          onSubmit={(e) => void handlePublishPost(e)}
+          className="rounded-2xl border border-purple-500/20 bg-slate-900/80 p-4 space-y-3"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-black text-white">إنشاء منشور</span>
+            <button
+              type="button"
+              onClick={() => void fetchGlobalPosts(true)}
+              disabled={refreshing}
+              className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/80 px-2.5 py-1 text-[11px] font-bold text-cyan-300 hover:border-cyan-500/40 transition"
+            >
+              <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
+              <span>تحديث</span>
+            </button>
+          </div>
 
-        <textarea
-          rows={2}
-          value={postText}
-          onChange={(e) => setPostText(e.target.value)}
-          placeholder="بماذا تفكر يا معلم؟ شارك منشورك مع الجميع..."
-          className="w-full rounded-xl border border-slate-800 bg-slate-950/90 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
-        />
+          <textarea
+            rows={2}
+            value={postText}
+            onFocus={() => setComposerExpanded(true)}
+            onChange={(e) => {
+              setPostText(e.target.value);
+              setComposerExpanded(true);
+            }}
+            placeholder="شارك لحظة بارزة من يومك..."
+            className="w-full rounded-xl border border-slate-800 bg-slate-950/90 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
+          />
 
-        {imagePreview && (
-          <div className="relative">
-            <img
-              src={imagePreview}
-              alt="معاينة الصورة"
-              className="max-h-60 w-full rounded-xl object-cover border border-slate-800"
-            />
+          {statusNotice && (
+            <p className="text-[11px] font-bold text-cyan-300">{statusNotice}</p>
+          )}
+
+          <div className="flex items-center justify-between pt-1">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-1.5 text-xs font-bold text-cyan-300 hover:border-cyan-500/40 transition"
+            >
+              <ImagePlus size={15} />
+              <span>إضافة صورة</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setComposerExpanded(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-[#1877F2] px-4 py-1.5 text-xs font-bold text-white shadow hover:bg-[#166fe5] transition"
+            >
+              <Send size={13} />
+              <span>نشر</span>
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="rounded-2xl border border-white/10 bg-[#1c1d21] text-white shadow-2xl overflow-hidden">
+          {/* هيدر إنشاء منشور */}
+          <div className="flex items-center justify-between border-b border-white/10 bg-[#242529] px-4 py-3">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setComposerExpanded(false)}
+                aria-label="رجوع"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-slate-200 hover:bg-white/10 transition"
+              >
+                <ArrowRight size={18} />
+              </button>
+              <span className="text-sm font-bold text-white">إنشاء منشور</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void executePublish()}
+              disabled={!canSubmit}
+              className={`rounded-lg px-3 py-1 text-xs font-bold transition ${
+                canSubmit
+                  ? 'bg-[#1877F2] text-white hover:bg-[#166fe5]'
+                  : 'text-slate-500 cursor-not-allowed'
+              }`}
+            >
+              {publishing ? 'جاري...' : 'نشر'}
+            </button>
+          </div>
+
+          {/* بيانات الحساب والخصوصية */}
+          <div className="px-4 pt-3.5 pb-2">
+            <div className="flex items-center gap-3">
+              {currentProfile.avatar ? (
+                <img
+                  src={currentProfile.avatar}
+                  alt=""
+                  className="h-11 w-11 shrink-0 rounded-full border border-white/15 object-cover"
+                />
+              ) : (
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-800 text-sm font-bold text-white border border-white/15">
+                  {displayName.slice(0, 1)}
+                </div>
+              )}
+              <div>
+                <p className="text-sm font-bold text-white leading-tight">{displayName}</p>
+                <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-white/15 bg-[#2a2b30] px-2 py-0.5 text-[11px] font-semibold text-slate-200">
+                  <span>العامة</span>
+                  <span>▾</span>
+                </div>
+              </div>
+            </div>
+
+            {/* مساحة الكتابة */}
+            <div className="mt-3.5">
+              <textarea
+                rows={selectedTheme === 'none' ? 3 : 4}
+                value={postText}
+                onChange={(e) => setPostText(e.target.value)}
+                placeholder="شارك لحظة بارزة من يومك..."
+                className={`w-full resize-none outline-none transition ${
+                  selectedTheme === 'none'
+                    ? 'bg-transparent text-base text-white placeholder:text-slate-400'
+                    : `${activeThemeObj.className} text-center text-lg font-bold ${
+                        isLightTheme ? 'placeholder:text-slate-500' : 'placeholder:text-white/75'
+                      }`
+                }`}
+              />
+            </div>
+
+            {activeExtraType && (
+              <div className="mt-2 flex items-center gap-2 rounded-xl border border-white/10 bg-[#2a2b30] px-3 py-2">
+                <input
+                  type="text"
+                  value={extraValue}
+                  onChange={(e) => setExtraValue(e.target.value)}
+                  placeholder={extraPlaceholderMap[activeExtraType] || 'أدخل التفاصيل...'}
+                  className="flex-1 bg-transparent text-xs text-white placeholder:text-slate-400 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveExtraType(null);
+                    setExtraValue('');
+                  }}
+                  aria-label="إغلاق الإضافة"
+                  className="text-slate-400 hover:text-white"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+
+            {imagePreview && (
+              <div className="mt-3 relative">
+                <img
+                  src={imagePreview}
+                  alt="معاينة الصورة"
+                  className="max-h-60 w-full rounded-xl object-cover border border-white/10"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedImageFile(null);
+                    setImagePreview('');
+                  }}
+                  className="mt-1.5 rounded-lg bg-rose-950/70 border border-rose-500/30 px-2.5 py-1 text-[11px] font-bold text-rose-200"
+                >
+                  إزالة الصورة
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* شريط الألوان */}
+          <div className="flex items-center gap-2 border-t border-white/10 bg-[#242529]/80 px-3 py-2">
+            <button
+              type="button"
+              onClick={() => setPostText((prev) => `${prev}@`)}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#32343a] text-sm font-bold text-white hover:bg-[#3e4047]"
+            >
+              @
+            </button>
+
+            <div
+              ref={themeStripRef}
+              className="flex flex-1 items-center gap-2 overflow-x-auto py-0.5"
+            >
+              {BG_THEMES.map((theme) => {
+                const active = selectedTheme === theme.id;
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() => setSelectedTheme(theme.id)}
+                    aria-label={theme.label}
+                    className={`h-7 w-7 shrink-0 rounded-lg transition ${SWATCH_COLORS[theme.id]} ${
+                      active ? 'ring-2 ring-white scale-105' : 'opacity-90 hover:opacity-100'
+                    }`}
+                  />
+                );
+              })}
+            </div>
+
             <button
               type="button"
               onClick={() => {
-                setSelectedImageFile(null);
-                setImagePreview('');
+                themeStripRef.current?.scrollBy({ left: -120, behavior: 'smooth' });
               }}
-              className="mt-1.5 rounded-lg bg-rose-950/60 border border-rose-500/30 px-2.5 py-1 text-[11px] font-bold text-rose-300"
+              aria-label="المزيد من الألوان"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#32343a] text-slate-200 hover:bg-[#3e4047]"
             >
-              إزالة الصورة
+              <ChevronLeft size={16} />
             </button>
           </div>
-        )}
 
-        {statusNotice && (
-          <p className="text-[11px] font-bold text-cyan-300">{statusNotice}</p>
-        )}
+          {/* قائمة الخيارات */}
+          <div className="divide-y divide-white/5 border-t border-white/10 bg-[#1c1d21]">
+            {composerOptions.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={item.onClick}
+                className="flex w-full items-center gap-3 px-4 py-2.5 text-right text-xs font-semibold text-slate-100 hover:bg-white/5 transition"
+              >
+                {item.icon}
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
 
-        <div className="flex items-center justify-between pt-1">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-1.5 text-xs font-bold text-cyan-300 hover:border-cyan-500/40 transition"
-          >
-            <ImagePlus size={15} />
-            <span>إضافة صورة</span>
-          </button>
+          {statusNotice && (
+            <p className="bg-[#242529] py-1.5 text-center text-xs font-bold text-cyan-300">
+              {statusNotice}
+            </p>
+          )}
 
-          <button
-            type="submit"
-            disabled={publishing}
-            className="flex items-center gap-1.5 rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 px-4 py-1.5 text-xs font-bold text-white shadow disabled:opacity-50"
-          >
-            <Send size={13} />
-            <span>{publishing ? 'جاري النشر...' : 'نشر'}</span>
-          </button>
+          {/* زر النشر العريض في الأسفل */}
+          <div className="bg-[#1c1d21] p-3 border-t border-white/10">
+            <button
+              type="button"
+              onClick={() => void executePublish()}
+              disabled={!canSubmit}
+              className="w-full rounded-lg bg-[#1877F2] py-2.5 text-sm font-extrabold text-white shadow transition enabled:hover:bg-[#166fe5] enabled:active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {publishing ? 'جاري النشر...' : 'نشر'}
+            </button>
+          </div>
         </div>
-      </form>
+      )}
 
       {/* قائمة المنشورات */}
       <div className="space-y-4">
