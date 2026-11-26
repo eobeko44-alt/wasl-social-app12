@@ -65,6 +65,11 @@ const LANG_STORAGE_KEY = 'wasl_lang_v1';
 const PROFILE_META_KEY = 'wasl_profile_meta_v3';
 const OVERRIDE_NAME_KEY = 'wasl_override_name_v1';
 const OVERRIDE_HANDLE_KEY = 'wasl_override_handle_v1';
+const NAME_LOCK_KEY = 'wasl_name_last_changed_at_v1';
+const NAME_COOLDOWN_DAYS = 7;
+const NAME_COOLDOWN_MS = NAME_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+const HEADER_DB_NAME = 'wasl_header_identity_db_v1';
+const HEADER_DB_STORE = 'identity_store';
 
 const BG_THEMES = [
   { id: 'none', label: 'افتراضي', className: 'bg-transparent text-white' },
@@ -122,6 +127,224 @@ const SWATCH_COLORS: Record<string, string> = {
   light: 'bg-white',
 };
 
+function openHeaderDB(): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    try {
+      if (typeof indexedDB === 'undefined') {
+        resolve(null);
+        return;
+      }
+      const req = indexedDB.open(HEADER_DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(HEADER_DB_STORE)) {
+          db.createObjectStore(HEADER_DB_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function writeIdentityToIDB(
+  name: string,
+  username: string,
+  lastNameChangedAt?: number | null
+): Promise<void> {
+  const db = await openHeaderDB();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(HEADER_DB_STORE, 'readwrite');
+      tx.objectStore(HEADER_DB_STORE).put(
+        {
+          name,
+          username,
+          lastNameChangedAt: lastNameChangedAt ?? null,
+        },
+        'current_identity'
+      );
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+async function readIdentityFromIDB(): Promise<{
+  name: string;
+  username: string;
+  lastNameChangedAt: number | null;
+} | null> {
+  const db = await openHeaderDB();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(HEADER_DB_STORE, 'readonly');
+      const req = tx.objectStore(HEADER_DB_STORE).get('current_identity');
+      req.onsuccess = () => {
+        const val = req.result as
+          | { name?: string; username?: string; lastNameChangedAt?: number | null }
+          | undefined;
+        if (val && (val.name || val.username || val.lastNameChangedAt)) {
+          resolve({
+            name: String(val.name || '').trim(),
+            username: String(val.username || '').trim(),
+            lastNameChangedAt:
+              typeof val.lastNameChangedAt === 'number' ? val.lastNameChangedAt : null,
+          });
+        } else {
+          resolve(null);
+        }
+      };
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function readWindowNameIdentity(): {
+  name: string;
+  username: string;
+  lastNameChangedAt: number | null;
+} {
+  try {
+    if (typeof window !== 'undefined' && window.name) {
+      const parsed = JSON.parse(window.name);
+      if (parsed && parsed.__wasl_id) {
+        return {
+          name: typeof parsed.name === 'string' ? parsed.name.trim() : '',
+          username: typeof parsed.username === 'string' ? parsed.username.trim() : '',
+          lastNameChangedAt:
+            typeof parsed.lastNameChangedAt === 'number' ? parsed.lastNameChangedAt : null,
+        };
+      }
+    }
+  } catch {
+    // تجاهل
+  }
+  return { name: '', username: '', lastNameChangedAt: null };
+}
+
+function writeWindowNameIdentity(
+  name: string,
+  username: string,
+  lastNameChangedAt?: number | null
+) {
+  try {
+    if (typeof window !== 'undefined') {
+      let prevLock: number | null = null;
+      try {
+        const existing = JSON.parse(window.name || '{}');
+        if (existing && typeof existing.lastNameChangedAt === 'number') {
+          prevLock = existing.lastNameChangedAt;
+        }
+      } catch {
+        // تجاهل
+      }
+      window.name = JSON.stringify({
+        __wasl_id: true,
+        name,
+        username,
+        lastNameChangedAt:
+          lastNameChangedAt !== undefined ? lastNameChangedAt : prevLock,
+      });
+    }
+  } catch {
+    // تجاهل
+  }
+}
+
+function readNameLockTimestamp(): number | null {
+  try {
+    const rawLs = localStorage.getItem(NAME_LOCK_KEY);
+    if (rawLs) {
+      const num = Number(rawLs);
+      if (!Number.isNaN(num) && num > 0) return num;
+    }
+  } catch {
+    // تجاهل
+  }
+  try {
+    const rawMeta = localStorage.getItem(PROFILE_META_KEY);
+    if (rawMeta) {
+      const parsed = JSON.parse(rawMeta);
+      if (typeof parsed?.lastNameChangedAt === 'number' && parsed.lastNameChangedAt > 0) {
+        return parsed.lastNameChangedAt;
+      }
+    }
+  } catch {
+    // تجاهل
+  }
+  const winId = readWindowNameIdentity();
+  if (typeof winId.lastNameChangedAt === 'number' && winId.lastNameChangedAt > 0) {
+    return winId.lastNameChangedAt;
+  }
+  return null;
+}
+
+function writeNameLockTimestamp(ts: number) {
+  try {
+    localStorage.setItem(NAME_LOCK_KEY, String(ts));
+  } catch {
+    // تجاهل
+  }
+  try {
+    const rawMeta = localStorage.getItem(PROFILE_META_KEY);
+    const prevMeta = rawMeta ? JSON.parse(rawMeta) : {};
+    localStorage.setItem(
+      PROFILE_META_KEY,
+      JSON.stringify({
+        ...prevMeta,
+        lastNameChangedAt: ts,
+      })
+    );
+  } catch {
+    // تجاهل
+  }
+  const winId = readWindowNameIdentity();
+  writeWindowNameIdentity(winId.name, winId.username, ts);
+}
+
+function getNameCooldownInfo(lastChangedAt: number | null): {
+  isLocked: boolean;
+  remainingLabel: string;
+} {
+  if (!lastChangedAt) {
+    return { isLocked: false, remainingLabel: '' };
+  }
+  const elapsed = Date.now() - lastChangedAt;
+  if (elapsed >= NAME_COOLDOWN_MS) {
+    return { isLocked: false, remainingLabel: '' };
+  }
+  const remainingMs = NAME_COOLDOWN_MS - elapsed;
+  const totalHours = Math.ceil(remainingMs / (1000 * 60 * 60));
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+
+  if (days > 0 && hours > 0) {
+    return {
+      isLocked: true,
+      remainingLabel: `${days} يوم و${hours} ساعة`,
+    };
+  }
+  if (days > 0) {
+    return {
+      isLocked: true,
+      remainingLabel: `${days} ${days === 1 ? 'يوم' : 'أيام'}`,
+    };
+  }
+  return {
+    isLocked: true,
+    remainingLabel: `${Math.max(1, totalHours)} ساعة`,
+  };
+}
+
 function readPersistedProfile(): { name: string; username: string; hasOverride: boolean } {
   try {
     const ovName = localStorage.getItem(OVERRIDE_NAME_KEY)?.trim() || '';
@@ -137,30 +360,53 @@ function readPersistedProfile(): { name: string; username: string; hasOverride: 
     const raw = localStorage.getItem(PROFILE_META_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      return {
-        name:
-          typeof parsed?.name === 'string' && parsed.name.trim()
-            ? parsed.name.trim()
-            : typeof parsed?.full_name === 'string' && parsed.full_name.trim()
-              ? parsed.full_name.trim()
-              : '',
-        username:
-          typeof parsed?.username === 'string' && parsed.username.trim()
-            ? parsed.username.trim()
-            : '',
-        hasOverride: false,
-      };
+      const n =
+        typeof parsed?.name === 'string' && parsed.name.trim()
+          ? parsed.name.trim()
+          : typeof parsed?.full_name === 'string' && parsed.full_name.trim()
+            ? parsed.full_name.trim()
+            : '';
+      const u =
+        typeof parsed?.username === 'string' && parsed.username.trim()
+          ? parsed.username.trim()
+          : '';
+      if (n || u) {
+        return { name: n, username: u, hasOverride: true };
+      }
     }
   } catch {
     // تجاهل خطأ القراءة
   }
+
+  const winId = readWindowNameIdentity();
+  if (winId.name || winId.username) {
+    return {
+      name: winId.name,
+      username: winId.username,
+      hasOverride: true,
+    };
+  }
+
   return { name: '', username: '', hasOverride: false };
 }
 
-function writePersistedProfile(name: string, username: string) {
+function writePersistedProfile(
+  name: string,
+  username: string,
+  lastNameChangedAt?: number | null
+) {
+  const effectiveLock =
+    lastNameChangedAt !== undefined ? lastNameChangedAt : readNameLockTimestamp();
+
+  writeWindowNameIdentity(name, username, effectiveLock);
+  void writeIdentityToIDB(name, username, effectiveLock);
+
   try {
     localStorage.setItem(OVERRIDE_NAME_KEY, name);
     localStorage.setItem(OVERRIDE_HANDLE_KEY, username);
+    if (typeof effectiveLock === 'number' && effectiveLock > 0) {
+      localStorage.setItem(NAME_LOCK_KEY, String(effectiveLock));
+    }
 
     const raw = localStorage.getItem(PROFILE_META_KEY);
     const prevMeta = raw ? JSON.parse(raw) : {};
@@ -171,11 +417,17 @@ function writePersistedProfile(name: string, username: string) {
         name,
         full_name: name,
         username,
+        lastNameChangedAt: effectiveLock ?? prevMeta?.lastNameChangedAt ?? null,
       })
     );
-    window.dispatchEvent(new Event('wasl-profile-updated'));
   } catch {
     // تجاهل خطأ التخزين
+  }
+
+  try {
+    window.dispatchEvent(new Event('wasl-profile-updated'));
+  } catch {
+    // تجاهل
   }
 }
 
@@ -212,6 +464,57 @@ export function WaslHeaderBar({
     const rawH = initialProfile.username || currentUserHandle;
     return rawH.startsWith('@') ? rawH : `@${rawH}`;
   });
+  const [lastNameChangedAt, setLastNameChangedAt] = useState<number | null>(() =>
+    readNameLockTimestamp()
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    void (async () => {
+      const current = readPersistedProfile();
+      const currentLock = readNameLockTimestamp();
+
+      if (current.name || current.username || currentLock) {
+        if (mounted) {
+          if (current.name || current.username) {
+            hasOverrideRef.current = true;
+          }
+          if (current.name) setDisplayName(current.name);
+          if (current.username) {
+            setDisplayHandle(
+              current.username.startsWith('@') ? current.username : `@${current.username}`
+            );
+          }
+          if (currentLock) setLastNameChangedAt(currentLock);
+        }
+        return;
+      }
+
+      const idbId = await readIdentityFromIDB();
+      if (mounted && idbId && (idbId.name || idbId.username || idbId.lastNameChangedAt)) {
+        if (idbId.name || idbId.username) {
+          hasOverrideRef.current = true;
+        }
+        if (idbId.name) setDisplayName(idbId.name);
+        if (idbId.username) {
+          setDisplayHandle(idbId.username.startsWith('@') ? idbId.username : `@${idbId.username}`);
+        }
+        if (idbId.lastNameChangedAt) {
+          setLastNameChangedAt(idbId.lastNameChangedAt);
+          writeNameLockTimestamp(idbId.lastNameChangedAt);
+        }
+        writePersistedProfile(
+          idbId.name || currentUserName,
+          idbId.username || currentUserHandle,
+          idbId.lastNameChangedAt ?? null
+        );
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [currentUserName, currentUserHandle]);
 
   useEffect(() => {
     if (hasOverrideRef.current) return;
@@ -235,6 +538,7 @@ export function WaslHeaderBar({
   const [editDetailsOpen, setEditDetailsOpen] = useState(false);
   const [editNameInput, setEditNameInput] = useState('');
   const [editHandleInput, setEditHandleInput] = useState('');
+  const [editError, setEditError] = useState('');
   const [savingDetails, setSavingDetails] = useState(false);
 
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(true);
@@ -316,8 +620,10 @@ export function WaslHeaderBar({
     setSettingsNotice(msg);
     setTimeout(() => {
       setSettingsNotice('');
-    }, 2500);
+    }, 3000);
   };
+
+  const lockInfo = getNameCooldownInfo(lastNameChangedAt);
 
   const openEditDetailsModal = () => {
     const saved = readPersistedProfile();
@@ -325,6 +631,7 @@ export function WaslHeaderBar({
     const currentH = (saved.username || displayHandle).replace(/^@+/, '');
     setEditNameInput(currentN);
     setEditHandleInput(currentH);
+    setEditError('');
     setEditDetailsOpen(true);
   };
 
@@ -333,17 +640,36 @@ export function WaslHeaderBar({
     const cleanedName = editNameInput.trim();
     const cleanedHandle = editHandleInput.trim().replace(/^@+/, '').replace(/\s+/g, '');
     if (!cleanedName) {
-      showTempNotice('الرجاء إدخال الاسم أولاً');
+      setEditError('الرجاء إدخال الاسم أولاً');
       return;
     }
+
+    const nameChanged = cleanedName !== displayName.trim();
+    const currentLockTs = readNameLockTimestamp() ?? lastNameChangedAt;
+    const currentLockState = getNameCooldownInfo(currentLockTs);
+
+    if (nameChanged && currentLockState.isLocked) {
+      setEditError(
+        `لا يمكنك تغيير الاسم الآن؛ مسموح بتغيير الاسم كل ${NAME_COOLDOWN_DAYS} أيام. المتبقي: ${currentLockState.remainingLabel}.`
+      );
+      return;
+    }
+
     const formattedHandle = cleanedHandle ? `@${cleanedHandle}` : '@wasl_user';
 
     setSavingDetails(true);
     try {
+      let nextLockTs = currentLockTs;
+      if (nameChanged) {
+        nextLockTs = Date.now();
+        setLastNameChangedAt(nextLockTs);
+        writeNameLockTimestamp(nextLockTs);
+      }
+
       hasOverrideRef.current = true;
       setDisplayName(cleanedName);
       setDisplayHandle(formattedHandle);
-      writePersistedProfile(cleanedName, formattedHandle);
+      writePersistedProfile(cleanedName, formattedHandle, nextLockTs);
 
       try {
         const { data: userData } = await supabase.auth.getUser();
@@ -351,18 +677,26 @@ export function WaslHeaderBar({
         if (uid) {
           await supabase
             .from('profiles')
-            .update({
-              full_name: cleanedName,
-              username: formattedHandle.replace(/^@/, ''),
-            })
-            .eq('id', uid);
+            .upsert(
+              {
+                id: uid,
+                full_name: cleanedName,
+                username: formattedHandle.replace(/^@/, ''),
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: 'id' }
+            );
         }
       } catch {
         // تجاهل خطأ الشبكة
       }
 
       setEditDetailsOpen(false);
-      showTempNotice('تم حفظ الاسم والمعرف وثبتوا بنجاح');
+      showTempNotice(
+        nameChanged
+          ? `تم حفظ الاسم بشكل دائم ولن يُحذف، ويمكنك تغييره مجدداً بعد ${NAME_COOLDOWN_DAYS} أيام`
+          : 'تم حفظ بيانات الحساب بنجاح'
+      );
     } finally {
       setSavingDetails(false);
     }
@@ -1587,17 +1921,10 @@ export function WaslHeaderBar({
                     type="button"
                     onClick={() => {
                       try {
-                        hasOverrideRef.current = false;
-                        localStorage.removeItem(PROFILE_META_KEY);
-                        localStorage.removeItem(OVERRIDE_NAME_KEY);
-                        localStorage.removeItem(OVERRIDE_HANDLE_KEY);
-                        setDisplayName(currentUserName);
-                        setDisplayHandle(
-                          currentUserHandle.startsWith('@')
-                            ? currentUserHandle
-                            : `@${currentUserHandle}`
-                        );
-                        showTempNotice('تم مسح الكاش المحلي بنجاح');
+                        localStorage.removeItem(PRIVACY_STORAGE_KEY);
+                        localStorage.removeItem(DARK_MODE_STORAGE_KEY);
+                        localStorage.removeItem(LANG_STORAGE_KEY);
+                        showTempNotice('تم مسح الكاش المؤقت والاسم الدائم محفوظ');
                       } catch {
                         showTempNotice('تعذر مسح الكاش الآن');
                       }
@@ -1605,7 +1932,7 @@ export function WaslHeaderBar({
                     className="flex w-full items-center gap-3 rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3 text-right text-xs font-bold text-rose-300 hover:bg-white/5 transition"
                   >
                     <Trash2 size={18} className="text-rose-400 shrink-0" />
-                    <span>مسح الكاش المحلي</span>
+                    <span>مسح الكاش المؤقت (الاسم محفوظ دائماً)</span>
                   </button>
                 )}
               </div>
@@ -1636,14 +1963,38 @@ export function WaslHeaderBar({
               </button>
             </div>
 
+            {lockInfo.isLocked && (
+              <div className="rounded-xl border border-amber-500/35 bg-amber-950/40 px-3 py-2 text-[11px] font-bold text-amber-200 leading-relaxed">
+                تغيير الاسم مقفل مؤقتاً (كل {NAME_COOLDOWN_DAYS} أيام). يمكنك تغيير الاسم مجدداً بعد:{' '}
+                <span className="text-amber-300">{lockInfo.remainingLabel}</span>.
+              </div>
+            )}
+
+            {editError && (
+              <div className="rounded-xl border border-rose-500/35 bg-rose-950/40 px-3 py-2 text-[11px] font-bold text-rose-200 leading-relaxed">
+                {editError}
+              </div>
+            )}
+
             <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-300">الاسم في الملف الشخصي</label>
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-slate-300">
+                  الاسم في الملف الشخصي
+                </label>
+                <span className="text-[10px] text-slate-400">
+                  متاح كل {NAME_COOLDOWN_DAYS} أيام
+                </span>
+              </div>
               <input
                 type="text"
                 value={editNameInput}
-                onChange={(e) => setEditNameInput(e.target.value)}
-                placeholder="مثال: abobaker0966"
-                className="w-full rounded-xl border border-white/15 bg-[#18191a] px-3.5 py-2.5 text-xs font-bold text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none"
+                disabled={lockInfo.isLocked}
+                onChange={(e) => {
+                  setEditError('');
+                  setEditNameInput(e.target.value);
+                }}
+                placeholder="مثال: بيكا ستور"
+                className="w-full rounded-xl border border-white/15 bg-[#18191a] px-3.5 py-2.5 text-xs font-bold text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-55 disabled:cursor-not-allowed"
               />
             </div>
 
@@ -1657,8 +2008,11 @@ export function WaslHeaderBar({
                 <input
                   type="text"
                   value={editHandleInput}
-                  onChange={(e) => setEditHandleInput(e.target.value.replace(/^@+/, ''))}
-                  placeholder="abobaker0966"
+                  onChange={(e) => {
+                    setEditError('');
+                    setEditHandleInput(e.target.value.replace(/^@+/, ''));
+                  }}
+                  placeholder="beka_store"
                   className="w-full bg-transparent text-xs font-bold text-white placeholder:text-slate-500 focus:outline-none"
                 />
               </div>
