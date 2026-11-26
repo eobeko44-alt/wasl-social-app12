@@ -1,105 +1,163 @@
-import { useEffect, useRef, useState } from 'react';
-import { ArrowRight, MoreVertical, Phone, Send, Video } from 'lucide-react';
-import { useAppStore } from '@/store/useAppStore';
-import { Avatar } from '@/components/UserCard';
+import React, { useEffect, useRef, useState } from 'react';
+import { Send } from 'lucide-react';
+import {
+  fetchConversationMessages,
+  getCurrentAuthUserId,
+  PersistentMessage,
+  readCachedMessages,
+  sendPersistentMessage,
+  subscribeToConversationMessages,
+} from '@/services/messagesService';
 
-export default function ChatWindow({ onBack }: { onBack: () => void }) {
-  const { conversations, activeConversationId, sendMessage, profile } = useAppStore();
-  const [text, setText] = useState('');
-  const bottomRef = useRef<HTMLDivElement>(null);
+interface PersistentChatBoxProps {
+  peerId: string;
+  peerName: string;
+  currentUserId?: string | null;
+}
 
-  const conversation = conversations.find((c) => c.id === activeConversationId);
+export default function PersistentChatBox({
+  peerId,
+  peerName,
+  currentUserId: externalUserId,
+}: PersistentChatBoxProps) {
+  const [myUserId, setMyUserId] = useState<string | null>(externalUserId ?? null);
+  const [messages, setMessages] = useState<PersistentMessage[]>([]);
+  const [inputText, setInputText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [notice, setNotice] = useState('');
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (externalUserId) {
+      setMyUserId(externalUserId);
+      return;
+    }
+    void getCurrentAuthUserId().then((id) => {
+      if (id) setMyUserId(id);
+    });
+  }, [externalUserId]);
+
+  useEffect(() => {
+    if (!myUserId || !peerId) {
+      setMessages([]);
+      return;
+    }
+
+    const cached = readCachedMessages(myUserId, peerId);
+    if (cached.length > 0) {
+      setMessages(cached);
+    }
+
+    let active = true;
+    void fetchConversationMessages(myUserId, peerId).then((list) => {
+      if (active) setMessages(list);
+    });
+
+    const unsubscribe = subscribeToConversationMessages(myUserId, peerId, (incoming) => {
+      if (!active) return;
+      setMessages((prev) => (prev.some((m) => m.id === incoming.id) ? prev : [...prev, incoming]));
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [myUserId, peerId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversation?.messages.length, activeConversationId]);
+  }, [messages.length]);
 
-  if (!conversation) {
-    return (
-      <div className="hidden flex-1 flex-col items-center justify-center gap-3 md:flex">
-        <div className="rounded-full bg-slate-800 p-6 text-slate-600">
-          <Send size={36} className="-scale-x-100" />
-        </div>
-        <p className="text-slate-400">اختر محادثة لبدء الدردشة</p>
-        <p className="text-xs text-slate-600">رسائلك الخاصة مشفّرة ومحفوظة لديك وحدك</p>
-      </div>
-    );
-  }
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = inputText.trim();
+    if (!trimmed || sending) return;
 
-  const submit = () => {
-    if (!text.trim()) return;
-    sendMessage(conversation.id, text.trim());
-    setText('');
+    setSending(true);
+    setNotice('');
+
+    const res = await sendPersistentMessage({
+      senderId: myUserId || '',
+      receiverId: peerId,
+      body: trimmed,
+    });
+
+    setSending(false);
+
+    if (res.errorText) {
+      setNotice(res.errorText);
+      return;
+    }
+
+    if (res.message) {
+      setMessages((prev) =>
+        prev.some((m) => m.id === res.message!.id) ? prev : [...prev, res.message!]
+      );
+      setInputText('');
+    }
   };
 
   return (
-    <div className="flex h-full flex-1 flex-col">
-      <header className="flex items-center gap-3 border-b border-slate-800 bg-slate-900/90 px-4 py-3 backdrop-blur">
-        <button
-          onClick={onBack}
-          className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-white md:hidden"
-          aria-label="رجوع"
-        >
-          <ArrowRight size={20} />
-        </button>
-        <Avatar src={conversation.user.avatar} online={conversation.user.isOnline} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold text-white">{conversation.user.name}</p>
-          <p className={`text-xs ${conversation.user.isOnline ? 'text-emerald-400' : 'text-slate-500'}`}>
-            {conversation.user.isOnline ? 'متصل الآن' : conversation.user.lastSeen}
-          </p>
-        </div>
-        <button className="rounded-full p-2 text-slate-400 transition hover:bg-slate-800 hover:text-cyan-300" aria-label="مكالمة صوتية">
-          <Phone size={18} />
-        </button>
-        <button className="hidden rounded-full p-2 text-slate-400 transition hover:bg-slate-800 hover:text-cyan-300 sm:block" aria-label="مكالمة فيديو">
-          <Video size={18} />
-        </button>
-        <button className="rounded-full p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white" aria-label="المزيد">
-          <MoreVertical size={18} />
-        </button>
-      </header>
+    <div dir="rtl" className="flex flex-col rounded-2xl border border-slate-800 bg-slate-900/85 overflow-hidden">
+      <div className="flex items-center justify-between border-b border-slate-800 px-4 py-2.5 bg-slate-950/70">
+        <span className="text-xs font-black text-white">{peerName}</span>
+        <span className="text-[10px] text-cyan-400">محفوظ في السحابة</span>
+      </div>
 
-      <div className="flex-1 space-y-2.5 overflow-y-auto bg-slate-950/50 p-4">
-        {conversation.messages.map((msg) => {
-          const mine = msg.senderId === 'me' || msg.senderId === profile.id;
-          return (
-            <div key={msg.id} className={`flex ${mine ? 'justify-start' : 'justify-end'}`}>
+      {notice && (
+        <div className="bg-amber-950/50 border-b border-amber-500/30 px-3 py-1.5 text-[11px] font-bold text-amber-300 text-center">
+          {notice}
+        </div>
+      )}
+
+      <div className="max-h-80 overflow-y-auto p-3.5 space-y-2.5">
+        {messages.length === 0 ? (
+          <p className="py-6 text-center text-xs text-slate-500">لا توجد رسائل بعد. ابدأ المحادثة الآن.</p>
+        ) : (
+          messages.map((msg) => {
+            const isMine = msg.sender_id === myUserId;
+            return (
               <div
-                className={`max-w-[75%] rounded-2xl px-4 py-2 text-sm leading-relaxed shadow-md ${
-                  mine
-                    ? 'rounded-tr-sm bg-gradient-to-l from-cyan-700 to-cyan-600 text-white'
-                    : 'rounded-tl-sm border border-slate-700/60 bg-slate-800 text-slate-100'
+                key={msg.id}
+                className={`flex flex-col max-w-[80%] rounded-2xl px-3.5 py-2 text-xs ${
+                  isMine
+                    ? 'mr-auto bg-gradient-to-l from-cyan-600 to-purple-600 text-white'
+                    : 'ml-auto bg-slate-800 text-slate-100 border border-slate-700/70'
                 }`}
               >
-                <p>{msg.text}</p>
-                <p className={`mt-0.5 text-[10px] ${mine ? 'text-cyan-200/70' : 'text-slate-500'}`}>{msg.createdAt}</p>
+                <span className="whitespace-pre-line leading-relaxed">{msg.body}</span>
+                <span className="mt-1 text-[9px] opacity-75">
+                  {msg.created_at
+                    ? new Date(msg.created_at).toLocaleTimeString('ar', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                    : ''}
+                </span>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
         <div ref={bottomRef} />
       </div>
 
-      <footer className="border-t border-slate-800 bg-slate-900/90 p-3">
-        <div className="flex items-center gap-2">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submit()}
-            placeholder="اكتب رسالتك هنا..."
-            className="w-full rounded-full border border-slate-700/70 bg-slate-800/70 px-5 py-2.5 text-sm text-white placeholder:text-slate-500 outline-none transition focus:border-cyan-500/60 focus:ring-2 focus:ring-cyan-500/20"
-          />
-          <button
-            onClick={submit}
-            disabled={!text.trim()}
-            className="shrink-0 rounded-full bg-gradient-to-l from-cyan-600 to-purple-600 p-3 text-white shadow-lg shadow-cyan-900/40 transition enabled:hover:brightness-110 enabled:active:scale-95 disabled:opacity-40"
-            aria-label="إرسال"
-          >
-            <Send size={18} className="-scale-x-100" />
-          </button>
-        </div>
-      </footer>
+      <form onSubmit={(e) => void handleSend(e)} className="flex items-center gap-2 border-t border-slate-800 p-2.5 bg-slate-950/70">
+        <input
+          type="text"
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
+          placeholder={`اكتب رسالة إلى ${peerName}...`}
+          className="flex-1 rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
+        />
+        <button
+          type="submit"
+          disabled={sending}
+          aria-label="إرسال الرسالة"
+          className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 text-white disabled:opacity-50"
+        >
+          <Send size={14} />
+        </button>
+      </form>
     </div>
   );
 }
