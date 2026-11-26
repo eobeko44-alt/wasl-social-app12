@@ -62,6 +62,9 @@ const MEDIA_BUCKET = 'wasl-media';
 const PRIVACY_STORAGE_KEY = 'wasl_account_is_public_v1';
 const DARK_MODE_STORAGE_KEY = 'wasl_dark_mode_v1';
 const LANG_STORAGE_KEY = 'wasl_lang_v1';
+const PROFILE_META_KEY = 'wasl_profile_meta_v3';
+const OVERRIDE_NAME_KEY = 'wasl_override_name_v1';
+const OVERRIDE_HANDLE_KEY = 'wasl_override_handle_v1';
 
 const BG_THEMES = [
   { id: 'none', label: 'افتراضي', className: 'bg-transparent text-white' },
@@ -119,23 +122,61 @@ const SWATCH_COLORS: Record<string, string> = {
   light: 'bg-white',
 };
 
-function readSavedProfileMeta() {
+function readPersistedProfile(): { name: string; username: string; hasOverride: boolean } {
   try {
-    const raw = localStorage.getItem('wasl_profile_meta_v3');
+    const ovName = localStorage.getItem(OVERRIDE_NAME_KEY)?.trim() || '';
+    const ovHandle = localStorage.getItem(OVERRIDE_HANDLE_KEY)?.trim() || '';
+    if (ovName || ovHandle) {
+      return {
+        name: ovName,
+        username: ovHandle,
+        hasOverride: true,
+      };
+    }
+
+    const raw = localStorage.getItem(PROFILE_META_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       return {
-        name: typeof parsed?.name === 'string' && parsed.name.trim() ? parsed.name.trim() : '',
+        name:
+          typeof parsed?.name === 'string' && parsed.name.trim()
+            ? parsed.name.trim()
+            : typeof parsed?.full_name === 'string' && parsed.full_name.trim()
+              ? parsed.full_name.trim()
+              : '',
         username:
           typeof parsed?.username === 'string' && parsed.username.trim()
             ? parsed.username.trim()
             : '',
+        hasOverride: false,
       };
     }
   } catch {
     // تجاهل خطأ القراءة
   }
-  return { name: '', username: '' };
+  return { name: '', username: '', hasOverride: false };
+}
+
+function writePersistedProfile(name: string, username: string) {
+  try {
+    localStorage.setItem(OVERRIDE_NAME_KEY, name);
+    localStorage.setItem(OVERRIDE_HANDLE_KEY, username);
+
+    const raw = localStorage.getItem(PROFILE_META_KEY);
+    const prevMeta = raw ? JSON.parse(raw) : {};
+    localStorage.setItem(
+      PROFILE_META_KEY,
+      JSON.stringify({
+        ...prevMeta,
+        name,
+        full_name: name,
+        username,
+      })
+    );
+    window.dispatchEvent(new Event('wasl-profile-updated'));
+  } catch {
+    // تجاهل خطأ التخزين
+  }
 }
 
 export function WaslHeaderBar({
@@ -161,28 +202,31 @@ export function WaslHeaderBar({
   const [searchQuery, setSearchQuery] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const initialMeta = readSavedProfileMeta();
+  const initialProfile = readPersistedProfile();
+  const hasOverrideRef = useRef<boolean>(initialProfile.hasOverride);
 
   const [displayName, setDisplayName] = useState<string>(
-    initialMeta.name || currentUserName
+    initialProfile.name || currentUserName
   );
   const [displayHandle, setDisplayHandle] = useState<string>(() => {
-    const rawH = initialMeta.username || currentUserHandle;
+    const rawH = initialProfile.username || currentUserHandle;
     return rawH.startsWith('@') ? rawH : `@${rawH}`;
   });
 
   useEffect(() => {
-    const meta = readSavedProfileMeta();
-    if (meta.name) {
-      setDisplayName(meta.name);
+    if (hasOverrideRef.current) return;
+    const saved = readPersistedProfile();
+    if (saved.name) {
+      setDisplayName(saved.name);
     } else if (currentUserName) {
       setDisplayName(currentUserName);
     }
   }, [currentUserName]);
 
   useEffect(() => {
-    const meta = readSavedProfileMeta();
-    const rawH = meta.username || currentUserHandle;
+    if (hasOverrideRef.current) return;
+    const saved = readPersistedProfile();
+    const rawH = saved.username || currentUserHandle;
     if (rawH) {
       setDisplayHandle(rawH.startsWith('@') ? rawH : `@${rawH}`);
     }
@@ -202,7 +246,7 @@ export function WaslHeaderBar({
     try {
       const saved = localStorage.getItem(PRIVACY_STORAGE_KEY);
       if (saved !== null) return saved === 'true';
-      const profileRaw = localStorage.getItem('wasl_profile_meta_v3');
+      const profileRaw = localStorage.getItem(PROFILE_META_KEY);
       if (profileRaw) {
         const parsed = JSON.parse(profileRaw);
         if (typeof parsed?.isPublicAccount === 'boolean') return parsed.isPublicAccount;
@@ -236,11 +280,11 @@ export function WaslHeaderBar({
   useEffect(() => {
     try {
       localStorage.setItem(PRIVACY_STORAGE_KEY, String(isPublicAccount));
-      const profileRaw = localStorage.getItem('wasl_profile_meta_v3');
+      const profileRaw = localStorage.getItem(PROFILE_META_KEY);
       if (profileRaw) {
         const parsed = JSON.parse(profileRaw);
         localStorage.setItem(
-          'wasl_profile_meta_v3',
+          PROFILE_META_KEY,
           JSON.stringify({ ...parsed, isPublicAccount })
         );
       }
@@ -276,9 +320,9 @@ export function WaslHeaderBar({
   };
 
   const openEditDetailsModal = () => {
-    const meta = readSavedProfileMeta();
-    const currentN = meta.name || displayName;
-    const currentH = (meta.username || displayHandle).replace(/^@+/, '');
+    const saved = readPersistedProfile();
+    const currentN = saved.name || displayName;
+    const currentH = (saved.username || displayHandle).replace(/^@+/, '');
     setEditNameInput(currentN);
     setEditHandleInput(currentH);
     setEditDetailsOpen(true);
@@ -296,24 +340,10 @@ export function WaslHeaderBar({
 
     setSavingDetails(true);
     try {
+      hasOverrideRef.current = true;
       setDisplayName(cleanedName);
       setDisplayHandle(formattedHandle);
-
-      try {
-        const raw = localStorage.getItem('wasl_profile_meta_v3');
-        const prevMeta = raw ? JSON.parse(raw) : {};
-        localStorage.setItem(
-          'wasl_profile_meta_v3',
-          JSON.stringify({
-            ...prevMeta,
-            name: cleanedName,
-            full_name: cleanedName,
-            username: formattedHandle,
-          })
-        );
-      } catch {
-        // تجاهل خطأ التخزين
-      }
+      writePersistedProfile(cleanedName, formattedHandle);
 
       try {
         const { data: userData } = await supabase.auth.getUser();
@@ -1557,7 +1587,16 @@ export function WaslHeaderBar({
                     type="button"
                     onClick={() => {
                       try {
-                        localStorage.removeItem('wasl_profile_meta_v3');
+                        hasOverrideRef.current = false;
+                        localStorage.removeItem(PROFILE_META_KEY);
+                        localStorage.removeItem(OVERRIDE_NAME_KEY);
+                        localStorage.removeItem(OVERRIDE_HANDLE_KEY);
+                        setDisplayName(currentUserName);
+                        setDisplayHandle(
+                          currentUserHandle.startsWith('@')
+                            ? currentUserHandle
+                            : `@${currentUserHandle}`
+                        );
                         showTempNotice('تم مسح الكاش المحلي بنجاح');
                       } catch {
                         showTempNotice('تعذر مسح الكاش الآن');
