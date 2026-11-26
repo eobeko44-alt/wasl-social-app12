@@ -37,7 +37,6 @@ export interface StoryItem {
 export interface FriendItem {
   id: string;
   name: string;
-  username: string;
   avatar?: string;
 }
 
@@ -46,7 +45,6 @@ interface WaslHeaderBarProps {
   onSelectTab: (tab: WaslTabKey) => void;
   unreadChatsCount?: number;
   currentUserName?: string;
-  currentUserHandle?: string;
   userAvatar?: string;
   friends?: FriendItem[];
   stories?: StoryItem[];
@@ -64,7 +62,6 @@ const DARK_MODE_STORAGE_KEY = 'wasl_dark_mode_v1';
 const LANG_STORAGE_KEY = 'wasl_lang_v1';
 const PROFILE_META_KEY = 'wasl_profile_meta_v3';
 const OVERRIDE_NAME_KEY = 'wasl_override_name_v1';
-const OVERRIDE_HANDLE_KEY = 'wasl_override_handle_v1';
 const NAME_LOCK_KEY = 'wasl_name_last_changed_at_v1';
 const NAME_COOLDOWN_DAYS = 7;
 const NAME_COOLDOWN_MS = NAME_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
@@ -149,9 +146,8 @@ function openHeaderDB(): Promise<IDBDatabase | null> {
   });
 }
 
-async function writeIdentityToIDB(
+async function writeNameToIDB(
   name: string,
-  username: string,
   lastNameChangedAt?: number | null
 ): Promise<void> {
   const db = await openHeaderDB();
@@ -162,7 +158,6 @@ async function writeIdentityToIDB(
       tx.objectStore(HEADER_DB_STORE).put(
         {
           name,
-          username,
           lastNameChangedAt: lastNameChangedAt ?? null,
         },
         'current_identity'
@@ -175,9 +170,8 @@ async function writeIdentityToIDB(
   });
 }
 
-async function readIdentityFromIDB(): Promise<{
+async function readNameFromIDB(): Promise<{
   name: string;
-  username: string;
   lastNameChangedAt: number | null;
 } | null> {
   const db = await openHeaderDB();
@@ -188,12 +182,11 @@ async function readIdentityFromIDB(): Promise<{
       const req = tx.objectStore(HEADER_DB_STORE).get('current_identity');
       req.onsuccess = () => {
         const val = req.result as
-          | { name?: string; username?: string; lastNameChangedAt?: number | null }
+          | { name?: string; lastNameChangedAt?: number | null }
           | undefined;
-        if (val && (val.name || val.username || val.lastNameChangedAt)) {
+        if (val && (val.name || val.lastNameChangedAt)) {
           resolve({
             name: String(val.name || '').trim(),
-            username: String(val.username || '').trim(),
             lastNameChangedAt:
               typeof val.lastNameChangedAt === 'number' ? val.lastNameChangedAt : null,
           });
@@ -208,9 +201,8 @@ async function readIdentityFromIDB(): Promise<{
   });
 }
 
-function readWindowNameIdentity(): {
+function readWindowNameData(): {
   name: string;
-  username: string;
   lastNameChangedAt: number | null;
 } {
   try {
@@ -219,7 +211,6 @@ function readWindowNameIdentity(): {
       if (parsed && parsed.__wasl_id) {
         return {
           name: typeof parsed.name === 'string' ? parsed.name.trim() : '',
-          username: typeof parsed.username === 'string' ? parsed.username.trim() : '',
           lastNameChangedAt:
             typeof parsed.lastNameChangedAt === 'number' ? parsed.lastNameChangedAt : null,
         };
@@ -228,12 +219,11 @@ function readWindowNameIdentity(): {
   } catch {
     // تجاهل
   }
-  return { name: '', username: '', lastNameChangedAt: null };
+  return { name: '', lastNameChangedAt: null };
 }
 
-function writeWindowNameIdentity(
+function writeWindowNameData(
   name: string,
-  username: string,
   lastNameChangedAt?: number | null
 ) {
   try {
@@ -250,7 +240,6 @@ function writeWindowNameIdentity(
       window.name = JSON.stringify({
         __wasl_id: true,
         name,
-        username,
         lastNameChangedAt:
           lastNameChangedAt !== undefined ? lastNameChangedAt : prevLock,
       });
@@ -281,7 +270,7 @@ function readNameLockTimestamp(): number | null {
   } catch {
     // تجاهل
   }
-  const winId = readWindowNameIdentity();
+  const winId = readWindowNameData();
   if (typeof winId.lastNameChangedAt === 'number' && winId.lastNameChangedAt > 0) {
     return winId.lastNameChangedAt;
   }
@@ -307,8 +296,8 @@ function writeNameLockTimestamp(ts: number) {
   } catch {
     // تجاهل
   }
-  const winId = readWindowNameIdentity();
-  writeWindowNameIdentity(winId.name, winId.username, ts);
+  const winId = readWindowNameData();
+  writeWindowNameData(winId.name, ts);
 }
 
 function getNameCooldownInfo(lastChangedAt: number | null): {
@@ -345,16 +334,11 @@ function getNameCooldownInfo(lastChangedAt: number | null): {
   };
 }
 
-function readPersistedProfile(): { name: string; username: string; hasOverride: boolean } {
+function readPersistedName(): { name: string; hasOverride: boolean } {
   try {
     const ovName = localStorage.getItem(OVERRIDE_NAME_KEY)?.trim() || '';
-    const ovHandle = localStorage.getItem(OVERRIDE_HANDLE_KEY)?.trim() || '';
-    if (ovName || ovHandle) {
-      return {
-        name: ovName,
-        username: ovHandle,
-        hasOverride: true,
-      };
+    if (ovName) {
+      return { name: ovName, hasOverride: true };
     }
 
     const raw = localStorage.getItem(PROFILE_META_KEY);
@@ -366,44 +350,31 @@ function readPersistedProfile(): { name: string; username: string; hasOverride: 
           : typeof parsed?.full_name === 'string' && parsed.full_name.trim()
             ? parsed.full_name.trim()
             : '';
-      const u =
-        typeof parsed?.username === 'string' && parsed.username.trim()
-          ? parsed.username.trim()
-          : '';
-      if (n || u) {
-        return { name: n, username: u, hasOverride: true };
+      if (n) {
+        return { name: n, hasOverride: true };
       }
     }
   } catch {
     // تجاهل خطأ القراءة
   }
 
-  const winId = readWindowNameIdentity();
-  if (winId.name || winId.username) {
-    return {
-      name: winId.name,
-      username: winId.username,
-      hasOverride: true,
-    };
+  const winId = readWindowNameData();
+  if (winId.name) {
+    return { name: winId.name, hasOverride: true };
   }
 
-  return { name: '', username: '', hasOverride: false };
+  return { name: '', hasOverride: false };
 }
 
-function writePersistedProfile(
-  name: string,
-  username: string,
-  lastNameChangedAt?: number | null
-) {
+function writePersistedName(name: string, lastNameChangedAt?: number | null) {
   const effectiveLock =
     lastNameChangedAt !== undefined ? lastNameChangedAt : readNameLockTimestamp();
 
-  writeWindowNameIdentity(name, username, effectiveLock);
-  void writeIdentityToIDB(name, username, effectiveLock);
+  writeWindowNameData(name, effectiveLock);
+  void writeNameToIDB(name, effectiveLock);
 
   try {
     localStorage.setItem(OVERRIDE_NAME_KEY, name);
-    localStorage.setItem(OVERRIDE_HANDLE_KEY, username);
     if (typeof effectiveLock === 'number' && effectiveLock > 0) {
       localStorage.setItem(NAME_LOCK_KEY, String(effectiveLock));
     }
@@ -416,7 +387,6 @@ function writePersistedProfile(
         ...prevMeta,
         name,
         full_name: name,
-        username,
         lastNameChangedAt: effectiveLock ?? prevMeta?.lastNameChangedAt ?? null,
       })
     );
@@ -435,8 +405,7 @@ export function WaslHeaderBar({
   activeTab,
   onSelectTab,
   unreadChatsCount = 0,
-  currentUserName = 'مستخدم وِصل',
-  currentUserHandle = '@wasl_user',
+  currentUserName = 'بيكا ستور',
   userAvatar,
   friends = [],
   stories = [
@@ -454,16 +423,12 @@ export function WaslHeaderBar({
   const [searchQuery, setSearchQuery] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const initialProfile = readPersistedProfile();
+  const initialProfile = readPersistedName();
   const hasOverrideRef = useRef<boolean>(initialProfile.hasOverride);
 
   const [displayName, setDisplayName] = useState<string>(
     initialProfile.name || currentUserName
   );
-  const [displayHandle, setDisplayHandle] = useState<string>(() => {
-    const rawH = initialProfile.username || currentUserHandle;
-    return rawH.startsWith('@') ? rawH : `@${rawH}`;
-  });
   const [lastNameChangedAt, setLastNameChangedAt] = useState<number | null>(() =>
     readNameLockTimestamp()
   );
@@ -471,54 +436,42 @@ export function WaslHeaderBar({
   useEffect(() => {
     let mounted = true;
     void (async () => {
-      const current = readPersistedProfile();
+      const current = readPersistedName();
       const currentLock = readNameLockTimestamp();
 
-      if (current.name || current.username || currentLock) {
+      if (current.name || currentLock) {
         if (mounted) {
-          if (current.name || current.username) {
+          if (current.name) {
             hasOverrideRef.current = true;
-          }
-          if (current.name) setDisplayName(current.name);
-          if (current.username) {
-            setDisplayHandle(
-              current.username.startsWith('@') ? current.username : `@${current.username}`
-            );
+            setDisplayName(current.name);
           }
           if (currentLock) setLastNameChangedAt(currentLock);
         }
         return;
       }
 
-      const idbId = await readIdentityFromIDB();
-      if (mounted && idbId && (idbId.name || idbId.username || idbId.lastNameChangedAt)) {
-        if (idbId.name || idbId.username) {
+      const idbId = await readNameFromIDB();
+      if (mounted && idbId && (idbId.name || idbId.lastNameChangedAt)) {
+        if (idbId.name) {
           hasOverrideRef.current = true;
-        }
-        if (idbId.name) setDisplayName(idbId.name);
-        if (idbId.username) {
-          setDisplayHandle(idbId.username.startsWith('@') ? idbId.username : `@${idbId.username}`);
+          setDisplayName(idbId.name);
         }
         if (idbId.lastNameChangedAt) {
           setLastNameChangedAt(idbId.lastNameChangedAt);
           writeNameLockTimestamp(idbId.lastNameChangedAt);
         }
-        writePersistedProfile(
-          idbId.name || currentUserName,
-          idbId.username || currentUserHandle,
-          idbId.lastNameChangedAt ?? null
-        );
+        writePersistedName(idbId.name || currentUserName, idbId.lastNameChangedAt ?? null);
       }
     })();
 
     return () => {
       mounted = false;
     };
-  }, [currentUserName, currentUserHandle]);
+  }, [currentUserName]);
 
   useEffect(() => {
     if (hasOverrideRef.current) return;
-    const saved = readPersistedProfile();
+    const saved = readPersistedName();
     if (saved.name) {
       setDisplayName(saved.name);
     } else if (currentUserName) {
@@ -526,18 +479,8 @@ export function WaslHeaderBar({
     }
   }, [currentUserName]);
 
-  useEffect(() => {
-    if (hasOverrideRef.current) return;
-    const saved = readPersistedProfile();
-    const rawH = saved.username || currentUserHandle;
-    if (rawH) {
-      setDisplayHandle(rawH.startsWith('@') ? rawH : `@${rawH}`);
-    }
-  }, [currentUserHandle]);
-
   const [editDetailsOpen, setEditDetailsOpen] = useState(false);
   const [editNameInput, setEditNameInput] = useState('');
-  const [editHandleInput, setEditHandleInput] = useState('');
   const [editError, setEditError] = useState('');
   const [savingDetails, setSavingDetails] = useState(false);
 
@@ -626,11 +569,9 @@ export function WaslHeaderBar({
   const lockInfo = getNameCooldownInfo(lastNameChangedAt);
 
   const openEditDetailsModal = () => {
-    const saved = readPersistedProfile();
+    const saved = readPersistedName();
     const currentN = saved.name || displayName;
-    const currentH = (saved.username || displayHandle).replace(/^@+/, '');
     setEditNameInput(currentN);
-    setEditHandleInput(currentH);
     setEditError('');
     setEditDetailsOpen(true);
   };
@@ -638,7 +579,6 @@ export function WaslHeaderBar({
   const handleSaveDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanedName = editNameInput.trim();
-    const cleanedHandle = editHandleInput.trim().replace(/^@+/, '').replace(/\s+/g, '');
     if (!cleanedName) {
       setEditError('الرجاء إدخال الاسم أولاً');
       return;
@@ -655,8 +595,6 @@ export function WaslHeaderBar({
       return;
     }
 
-    const formattedHandle = cleanedHandle ? `@${cleanedHandle}` : '@wasl_user';
-
     setSavingDetails(true);
     try {
       let nextLockTs = currentLockTs;
@@ -668,8 +606,7 @@ export function WaslHeaderBar({
 
       hasOverrideRef.current = true;
       setDisplayName(cleanedName);
-      setDisplayHandle(formattedHandle);
-      writePersistedProfile(cleanedName, formattedHandle, nextLockTs);
+      writePersistedName(cleanedName, nextLockTs);
 
       try {
         const { data: userData } = await supabase.auth.getUser();
@@ -681,7 +618,6 @@ export function WaslHeaderBar({
               {
                 id: uid,
                 full_name: cleanedName,
-                username: formattedHandle.replace(/^@/, ''),
                 updated_at: new Date().toISOString(),
               },
               { onConflict: 'id' }
@@ -719,13 +655,9 @@ export function WaslHeaderBar({
   const postFileInputRef = useRef<HTMLInputElement | null>(null);
   const themeStripRef = useRef<HTMLDivElement | null>(null);
 
-  const normalizedQuery = searchQuery.trim().toLowerCase().replace(/^@/, '');
+  const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredFriends = normalizedQuery
-    ? friends.filter(
-        (f) =>
-          f.name.toLowerCase().includes(normalizedQuery) ||
-          f.username.toLowerCase().replace(/^@/, '').includes(normalizedQuery)
-      )
+    ? friends.filter((f) => f.name.toLowerCase().includes(normalizedQuery))
     : friends;
 
   const tabs: { key: WaslTabKey; label: string; icon: string; badge?: number }[] = [
@@ -863,17 +795,12 @@ export function WaslHeaderBar({
         finalImageUrl = await uploadPostImageToStorage(postSelectedFile, postImageData);
       }
 
-      const normalizedHandle = displayHandle.startsWith('@')
-        ? displayHandle
-        : `@${displayHandle}`;
-
       const { data: userData } = await supabase.auth.getUser();
       const userId = userData?.user?.id ?? null;
 
       await supabase.from('posts').insert({
         user_id: userId,
         author_name: displayName,
-        author_handle: normalizedHandle,
         headline: finalImageUrl ? `نشر ${displayName} صورة` : `نشر ${displayName}`,
         content: finalContent || null,
         image_url: finalImageUrl || null,
@@ -1017,8 +944,8 @@ export function WaslHeaderBar({
               setSearchOpen((prev) => !prev);
               setSearchQuery('');
             }}
-            title="بحث عن أصدقاء باسم الحساب"
-            aria-label="بحث عن أصدقاء باسم الحساب"
+            title="بحث عن أصدقاء"
+            aria-label="بحث عن أصدقاء"
             className={`flex h-9 w-9 items-center justify-center rounded-full border text-sm transition ${
               searchOpen
                 ? 'bg-cyan-500/15 border-cyan-400 text-cyan-300'
@@ -1040,16 +967,16 @@ export function WaslHeaderBar({
         </div>
       </div>
 
-      {/* شريط البحث عن الأصدقاء باسم الحساب */}
+      {/* شريط البحث عن الأصدقاء */}
       {searchOpen && (
         <div className="px-4 pb-2.5 space-y-2 border-b border-slate-800/80 bg-slate-950">
           <div className="flex items-center gap-2 rounded-xl bg-slate-900 border border-purple-500/25 px-3 py-2">
-            <span className="text-xs text-cyan-400">@</span>
+            <Search size={14} className="text-cyan-400 shrink-0" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="ابحث عن صديق بالاسم أو اسم الحساب..."
+              placeholder="ابحث عن صديق بالاسم..."
               autoFocus
               className="w-full bg-transparent text-xs text-white placeholder:text-slate-500 focus:outline-none"
             />
@@ -1092,9 +1019,6 @@ export function WaslHeaderBar({
                       )}
                       <div className="min-w-0">
                         <p className="truncate text-xs font-bold text-white">{friend.name}</p>
-                        <p className="truncate text-[10px] text-slate-400" dir="ltr">
-                          {friend.username}
-                        </p>
                       </div>
                     </div>
                     <span className="text-[11px] font-bold text-cyan-400">عرض</span>
@@ -1374,14 +1298,6 @@ export function WaslHeaderBar({
               </div>
 
               <div className="flex items-center gap-2 border-t border-white/10 bg-[#242529]/80 px-3 py-2">
-                <button
-                  type="button"
-                  onClick={() => setPostText((prev) => `${prev}@`)}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#32343a] text-sm font-bold text-white hover:bg-[#3e4047]"
-                >
-                  @
-                </button>
-
                 <div
                   ref={themeStripRef}
                   className="flex flex-1 items-center gap-2 overflow-x-auto py-0.5"
@@ -1513,9 +1429,6 @@ export function WaslHeaderBar({
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-black text-white">{displayName}</p>
-                  <p className="truncate text-[11px] text-cyan-400" dir="ltr">
-                    {displayHandle}
-                  </p>
                 </div>
                 <button
                   type="button"
@@ -1547,7 +1460,7 @@ export function WaslHeaderBar({
                   }}
                   className="w-full flex items-center justify-between rounded-xl bg-slate-950/80 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-100 hover:border-purple-500/40 transition"
                 >
-                  <span>بحث عن أصدقاء باسم الحساب</span>
+                  <span>بحث عن أصدقاء</span>
                   <span>🔍</span>
                 </button>
 
@@ -1728,9 +1641,6 @@ export function WaslHeaderBar({
             <div className="rounded-2xl border border-white/10 bg-[#242526] p-4 space-y-3.5 shadow">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-black tracking-wide text-cyan-400">وِصل</span>
-                <span className="text-[11px] text-slate-400" dir="ltr">
-                  {displayHandle}
-                </span>
               </div>
 
               <div>
@@ -1941,7 +1851,7 @@ export function WaslHeaderBar({
         </div>
       )}
 
-      {/* نافذة تعديل الاسم والمعرف (@) عند الضغط على «التفاصيل الشخصية» */}
+      {/* نافذة تعديل الاسم عند الضغط على «التفاصيل الشخصية» */}
       {editDetailsOpen && (
         <div
           dir="rtl"
@@ -1996,26 +1906,6 @@ export function WaslHeaderBar({
                 placeholder="مثال: بيكا ستور"
                 className="w-full rounded-xl border border-white/15 bg-[#18191a] px-3.5 py-2.5 text-xs font-bold text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-55 disabled:cursor-not-allowed"
               />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-300">اسم المستخدم (@)</label>
-              <div
-                dir="ltr"
-                className="flex items-center rounded-xl border border-white/15 bg-[#18191a] px-3 py-2 focus-within:border-cyan-400"
-              >
-                <span className="text-xs font-extrabold text-cyan-400 mr-1">@</span>
-                <input
-                  type="text"
-                  value={editHandleInput}
-                  onChange={(e) => {
-                    setEditError('');
-                    setEditHandleInput(e.target.value.replace(/^@+/, ''));
-                  }}
-                  placeholder="beka_store"
-                  className="w-full bg-transparent text-xs font-bold text-white placeholder:text-slate-500 focus:outline-none"
-                />
-              </div>
             </div>
 
             <div className="flex items-center gap-2 pt-1">
