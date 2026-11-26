@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Users,
   ImagePlus,
-  RefreshCw,
   ArrowRight,
   Music,
   UserPlus,
@@ -126,7 +125,6 @@ export default function FeedTab() {
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>('');
   const [publishing, setPublishing] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [statusNotice, setStatusNotice] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -150,8 +148,7 @@ export default function FeedTab() {
     };
   };
 
-  const fetchGlobalPosts = async (isManual = false) => {
-    if (isManual) setRefreshing(true);
+  const fetchGlobalPosts = async () => {
     try {
       const { data, error } = await supabase
         .from('posts')
@@ -164,13 +161,11 @@ export default function FeedTab() {
       }
     } catch {
       // يظل العرض المحلي شغالاً
-    } finally {
-      if (isManual) setRefreshing(false);
     }
   };
 
   useEffect(() => {
-    void fetchGlobalPosts(false);
+    void fetchGlobalPosts();
 
     const channel = supabase
       .channel('wasl-global-posts-feed')
@@ -435,43 +430,13 @@ export default function FeedTab() {
         className="hidden"
       />
 
-      {/* شريط بداية النشر السريع فقط (بدون صندوق ثابت من تحت) */}
-      <div className="rounded-2xl border border-purple-500/20 bg-slate-900/80 p-3 space-y-2">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setComposerOpen(true)}
-            className="flex-1 rounded-full border border-slate-800 bg-slate-950/90 px-4 py-2 text-right text-xs text-slate-400 hover:border-cyan-500/40 transition"
-          >
-            بم تفكر؟
-          </button>
+      {statusNotice && (
+        <p className="rounded-xl border border-cyan-500/20 bg-slate-900/90 px-3 py-2 text-xs font-bold text-cyan-300">
+          {statusNotice}
+        </p>
+      )}
 
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950/80 px-2.5 py-1.5 text-xs font-bold text-cyan-300 hover:border-cyan-500/40 transition"
-          >
-            <ImagePlus size={15} />
-            <span>صورة</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void fetchGlobalPosts(true)}
-            disabled={refreshing}
-            className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950/80 px-2.5 py-1.5 text-[11px] font-bold text-slate-300 hover:border-cyan-500/40 transition"
-          >
-            <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
-            <span>تحديث</span>
-          </button>
-        </div>
-
-        {statusNotice && (
-          <p className="text-[11px] font-bold text-cyan-300 px-1">{statusNotice}</p>
-        )}
-      </div>
-
-      {/* قائمة «إنشاء منشور» المنبثقة عند الضغط على «بم تفكر؟» أو «صورة» */}
+      {/* قائمة «إنشاء منشور» المنبثقة */}
       {composerOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-xs p-0 sm:p-4">
           <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#1c1d21] text-white shadow-2xl flex flex-col justify-between">
