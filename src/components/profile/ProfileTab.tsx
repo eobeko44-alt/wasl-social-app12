@@ -6,8 +6,6 @@ import {
   Cake,
   GraduationCap,
   Gamepad2,
-  AtSign,
-  Phone,
   Plus,
   Edit3,
   Users,
@@ -35,7 +33,6 @@ interface ActivityPostItem {
   id: string;
   dbId?: string;
   authorName: string;
-  authorHandle?: string;
   authorAvatar?: string;
   headline: string;
   content?: string;
@@ -67,53 +64,34 @@ const POSTS_STORAGE_KEY = 'wasl_profile_posts_v3';
 const AVATAR_KEY = 'wasl_persisted_avatar_v1';
 const COVER_KEY = 'wasl_persisted_cover_v1';
 const OVERRIDE_NAME_KEY = 'wasl_override_name_v1';
-const OVERRIDE_HANDLE_KEY = 'wasl_override_handle_v1';
 const DB_NAME = 'wasl_profile_db_v1';
 const DB_STORE = 'profile_state';
 const MEDIA_BUCKET = 'wasl-media';
 
-function resolveIdentityFromStorage(fallbackName: string, fallbackHandle: string): {
-  name: string;
-  handle: string;
-} {
-  let resolvedName = '';
-  let resolvedHandle = '';
-
+function resolveNameFromStorage(fallbackName: string): string {
   try {
     const ovName = localStorage.getItem(OVERRIDE_NAME_KEY)?.trim() || '';
-    const ovHandle = localStorage.getItem(OVERRIDE_HANDLE_KEY)?.trim() || '';
-    if (ovName) resolvedName = ovName;
-    if (ovHandle) resolvedHandle = ovHandle;
+    if (ovName) return ovName;
   } catch {
     // تجاهل
   }
 
-  if (!resolvedName || !resolvedHandle) {
-    try {
-      const raw = localStorage.getItem(META_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (!resolvedName) {
-          resolvedName =
-            typeof parsed?.name === 'string' && parsed.name.trim()
-              ? parsed.name.trim()
-              : typeof parsed?.full_name === 'string' && parsed.full_name.trim()
-                ? parsed.full_name.trim()
-                : '';
-        }
-        if (!resolvedHandle && typeof parsed?.username === 'string' && parsed.username.trim()) {
-          resolvedHandle = parsed.username.trim();
-        }
+  try {
+    const raw = localStorage.getItem(META_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.name === 'string' && parsed.name.trim()) {
+        return parsed.name.trim();
       }
-    } catch {
-      // تجاهل
+      if (typeof parsed?.full_name === 'string' && parsed.full_name.trim()) {
+        return parsed.full_name.trim();
+      }
     }
+  } catch {
+    // تجاهل
   }
 
-  const finalName = resolvedName || fallbackName;
-  const rawH = resolvedHandle || fallbackHandle || '@abobaker096605';
-  const finalHandle = rawH.startsWith('@') ? rawH : `@${rawH}`;
-  return { name: finalName, handle: finalHandle };
+  return fallbackName;
 }
 
 function openProfileDB(): Promise<IDBDatabase | null> {
@@ -253,29 +231,24 @@ export default function ProfileTab() {
 
   const fallbackStoreName =
     profile.name && profile.name !== 'أنت' ? String(profile.name) : 'abobaker096605';
-  const fallbackStoreHandle = profile.username || '@abobaker096605';
 
-  const initialIdentity = resolveIdentityFromStorage(fallbackStoreName, fallbackStoreHandle);
-  const [displayName, setDisplayName] = useState<string>(initialIdentity.name);
-  const [displayHandle, setDisplayHandle] = useState<string>(initialIdentity.handle);
+  const [displayName, setDisplayName] = useState<string>(() =>
+    resolveNameFromStorage(fallbackStoreName)
+  );
 
   useEffect(() => {
-    const syncIdentity = () => {
-      const nextId = resolveIdentityFromStorage(fallbackStoreName, fallbackStoreHandle);
-      setDisplayName(nextId.name);
-      setDisplayHandle(nextId.handle);
+    const syncName = () => {
+      setDisplayName(resolveNameFromStorage(fallbackStoreName));
     };
 
-    syncIdentity();
-    window.addEventListener('wasl-profile-updated', syncIdentity);
-    window.addEventListener('storage', syncIdentity);
+    syncName();
+    window.addEventListener('wasl-profile-updated', syncName);
+    window.addEventListener('storage', syncName);
     return () => {
-      window.removeEventListener('wasl-profile-updated', syncIdentity);
-      window.removeEventListener('storage', syncIdentity);
+      window.removeEventListener('wasl-profile-updated', syncName);
+      window.removeEventListener('storage', syncName);
     };
-  }, [fallbackStoreName, fallbackStoreHandle]);
-
-  const displayPhone = profile.phone || profile.phone_number || '+966 5X XXX XXXX';
+  }, [fallbackStoreName]);
 
   const [activeSubTab, setActiveSubTab] = useState<ProfileSectionTab>('all');
   const [coverImage, setCoverImage] = useState<string>(
@@ -326,6 +299,7 @@ export default function ProfileTab() {
   );
 
   const buildInitialPosts = (baseSaved: Partial<PersistedProfileData>): ActivityPostItem[] => {
+    const resolvedStartName = resolveNameFromStorage(fallbackStoreName);
     const persistedList = Array.isArray(baseSaved.posts) ? baseSaved.posts : [];
     const existingIds = new Set(persistedList.map((p) => p.id));
 
@@ -338,24 +312,23 @@ export default function ProfileTab() {
           text.includes('صورة ملفه الشخصي') || text.includes('صورة الملف الشخصي');
         const isCoverUpdate = text.includes('صورة الغلاف');
 
-        let headline = `نشر ${initialIdentity.name}`;
+        let headline = `نشر ${resolvedStartName}`;
         let kind: ActivityPostItem['kind'] = 'post';
 
         if (isAvatarUpdate) {
-          headline = `قام ${initialIdentity.name} بتحديث صورة ملفه الشخصي`;
+          headline = `قام ${resolvedStartName} بتحديث صورة ملفه الشخصي`;
           kind = 'avatar';
         } else if (isCoverUpdate) {
-          headline = `قام ${initialIdentity.name} بتحديث صورة الغلاف`;
+          headline = `قام ${resolvedStartName} بتحديث صورة الغلاف`;
           kind = 'cover';
         } else if (img) {
-          headline = `نشر ${initialIdentity.name} صورة`;
+          headline = `نشر ${resolvedStartName} صورة`;
           kind = 'photo';
         }
 
         return {
           id: String(p.id || `store-post-${idx}`),
-          authorName: initialIdentity.name,
-          authorHandle: initialIdentity.handle,
+          authorName: resolvedStartName,
           authorAvatar:
             baseSaved.avatarImage ||
             (typeof p.authorAvatar === 'string' ? p.authorAvatar : undefined),
@@ -404,7 +377,6 @@ export default function ProfileTab() {
         {
           id: userId,
           full_name: displayName,
-          username: displayHandle,
           avatar_url: overrides?.avatar_url !== undefined ? overrides.avatar_url : avatarImage || null,
           cover_url: overrides?.cover_url !== undefined ? overrides.cover_url : coverImage || null,
           bio: overrides?.bio !== undefined ? overrides.bio : bio,
@@ -517,7 +489,6 @@ export default function ProfileTab() {
               id: `supa-${String(row.id)}`,
               dbId: String(row.id),
               authorName: String(row.author_name || displayName),
-              authorHandle: String(row.author_handle || displayHandle),
               headline:
                 String(row.headline || '') ||
                 (kindVal === 'avatar'
@@ -562,7 +533,7 @@ export default function ProfileTab() {
     return () => {
       active = false;
     };
-  }, [displayName, displayHandle]);
+  }, [displayName]);
 
   useEffect(() => {
     if (!hydratedFromDB) return;
@@ -626,7 +597,6 @@ export default function ProfileTab() {
         .insert({
           user_id: userId,
           author_name: item.authorName,
-          author_handle: item.authorHandle || displayHandle,
           headline: item.headline,
           content: item.content || null,
           image_url: item.image || null,
@@ -703,7 +673,6 @@ export default function ProfileTab() {
       store.addPost({
         id: fullItem.id,
         authorName: fullItem.authorName,
-        authorHandle: fullItem.authorHandle,
         authorAvatar: fullItem.authorAvatar,
         content: fullItem.content ? `${fullItem.headline} — ${fullItem.content}` : fullItem.headline,
         image: fullItem.image,
@@ -726,7 +695,6 @@ export default function ProfileTab() {
     await pushActivityPost({
       id: `cover-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       authorName: displayName,
-      authorHandle: displayHandle,
       authorAvatar: avatarImage || undefined,
       headline: `قام ${displayName} بتحديث صورة الغلاف`,
       image: imageUrl,
@@ -749,7 +717,6 @@ export default function ProfileTab() {
     await pushActivityPost({
       id: `avatar-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       authorName: displayName,
-      authorHandle: displayHandle,
       authorAvatar: imageUrl,
       headline: `قام ${displayName} بتحديث صورة ملفه الشخصي`,
       image: imageUrl,
@@ -994,10 +961,7 @@ export default function ProfileTab() {
 
           <div className="space-y-1">
             <h1 className="text-xl font-black text-white">{displayName}</h1>
-            <p className="text-xs font-semibold text-cyan-400" dir="ltr">
-              {displayHandle}
-            </p>
-            <p className="pt-1 text-xs leading-relaxed text-slate-300">{bio}</p>
+            <p className="pt-0.5 text-xs leading-relaxed text-slate-300">{bio}</p>
           </div>
 
           <div className="mt-3.5 grid grid-cols-2 gap-2.5">
@@ -1034,28 +998,6 @@ export default function ProfileTab() {
             <div className="rounded-xl border border-slate-800 bg-slate-950/75 py-2.5 px-2 text-center">
               <p className="text-sm font-black text-cyan-400">{activityPosts.length}</p>
               <p className="text-[11px] font-semibold text-slate-400">منشورات</p>
-            </div>
-          </div>
-
-          <div className="mt-3 space-y-2">
-            <div className="flex items-center justify-between rounded-xl border border-slate-800/90 bg-slate-950/60 px-3.5 py-2.5 text-xs">
-              <span className="font-mono text-slate-200" dir="ltr">
-                {displayPhone}
-              </span>
-              <span className="flex items-center gap-1.5 text-slate-400">
-                <span>رقم الهاتف</span>
-                <Phone size={14} className="text-cyan-400" />
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between rounded-xl border border-slate-800/90 bg-slate-950/60 px-3.5 py-2.5 text-xs">
-              <span className="font-semibold text-cyan-300" dir="ltr">
-                {displayHandle}
-              </span>
-              <span className="flex items-center gap-1.5 text-slate-400">
-                <span>اسم المستخدم</span>
-                <AtSign size={14} className="text-purple-400" />
-              </span>
             </div>
           </div>
         </div>
