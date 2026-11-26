@@ -20,6 +20,7 @@ import {
   Send,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import { supabase } from '@/lib/supabase';
 
 type ProfileSectionTab = 'all' | 'photos' | 'about';
 
@@ -32,6 +33,7 @@ interface PostCommentItem {
 
 interface ActivityPostItem {
   id: string;
+  dbId?: string;
   authorName: string;
   authorHandle?: string;
   authorAvatar?: string;
@@ -64,6 +66,7 @@ const META_STORAGE_KEY = 'wasl_profile_meta_v3';
 const POSTS_STORAGE_KEY = 'wasl_profile_posts_v3';
 const DB_NAME = 'wasl_profile_db_v1';
 const DB_STORE = 'profile_state';
+const MEDIA_BUCKET = 'wasl-media';
 
 function openProfileDB(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
@@ -144,7 +147,7 @@ function saveLocalSnapshot(data: PersistedProfileData) {
   try {
     localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(posts));
   } catch {
-    // في حال كبر حجم الصور في localStorage، يظل IndexedDB حافظاً لكامل البيانات بدون قيود
+    // تجاهل
   }
   void saveToIndexedDB(data);
 }
@@ -284,12 +287,13 @@ export default function ProfileTab() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const highlightInputRef = useRef<HTMLInputElement | null>(null);
 
-  // استعادة البيانات الكاملة من IndexedDB عند بدء التحميل
+  // استعادة البيانات من IndexedDB ثم مزامنة المنشورات الدائمة من Supabase
   useEffect(() => {
     let active = true;
-    void loadFromIndexedDB().then((dbData) => {
-      if (!active) return;
-      if (dbData) {
+
+    async function hydrateAll() {
+      const dbData = await loadFromIndexedDB();
+      if (active && dbData) {
         if (dbData.coverImage) setCoverImage(dbData.coverImage);
         if (dbData.avatarImage) setAvatarImage(dbData.avatarImage);
         if (typeof dbData.bio === 'string') setBio(dbData.bio);
@@ -312,14 +316,76 @@ export default function ProfileTab() {
           });
         }
       }
-      setHydratedFromDB(true);
-    });
+
+      try {
+        const { data: supaPosts, error } = await supabase
+          .from('posts')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (active && !error && Array.isArray(supaPosts) && supaPosts.length > 0) {
+          const mappedRemote: ActivityPostItem[] = supaPosts.map((row: Record<string, any>) => {
+            const kindVal: ActivityPostItem['kind'] =
+              row.kind === 'avatar' ||
+              row.kind === 'cover' ||
+              row.kind === 'photo' ||
+              row.kind === 'post'
+                ? row.kind
+                : row.image_url
+                  ? 'photo'
+                  : 'post';
+
+            return {
+              id: `supa-${String(row.id)}`,
+              dbId: String(row.id),
+              authorName: String(row.author_name || displayName),
+              authorHandle: String(row.author_handle || displayHandle),
+              headline:
+                String(row.headline || '') ||
+                (kindVal === 'avatar'
+                  ? `قام ${row.author_name || displayName} بتحديث صورة ملفه الشخصي`
+                  : kindVal === 'cover'
+                    ? `قام ${row.author_name || displayName} بتحديث صورة الغلاف`
+                    : kindVal === 'photo'
+                      ? `نشر ${row.author_name || displayName} صورة`
+                      : `نشر ${row.author_name || displayName}`),
+              content: row.content ? String(row.content) : undefined,
+              image: row.image_url ? String(row.image_url) : undefined,
+              createdAt: row.created_at
+                ? new Date(String(row.created_at)).toLocaleDateString('ar')
+                : 'الآن',
+              kind: kindVal,
+              liked: false,
+              likesCount: 0,
+              sharesCount: 0,
+              comments: [],
+            };
+          });
+
+          setActivityPosts((prev) => {
+            const existingDbIds = new Set(prev.map((p) => p.dbId).filter(Boolean));
+            const existingIds = new Set(prev.map((p) => p.id));
+            const uniqueRemote = mappedRemote.filter(
+              (r) => !existingDbIds.has(r.dbId) && !existingIds.has(r.id)
+            );
+            return [...prev, ...uniqueRemote];
+          });
+        }
+      } catch {
+        // يظل التخزين المحلي شغالاً دون تعطيل الصفحة
+      }
+
+      if (active) {
+        setHydratedFromDB(true);
+      }
+    }
+
+    void hydrateAll();
     return () => {
       active = false;
     };
-  }, []);
+  }, [displayName, displayHandle]);
 
-  // حفظ مستمر مفتوح بدون قيود على عدد أو حجم الصور
   useEffect(() => {
     if (!hydratedFromDB) return;
     saveLocalSnapshot({
@@ -350,6 +416,59 @@ export default function ProfileTab() {
     activityPosts,
   ]);
 
+  // رفع الصورة إلى Supabase Storage (wasl-media) مع الاحتفاظ بالرابط العام أو DataURL احتياطياً
+  async function uploadToWaslMedia(file: File, fallbackDataUrl: string): Promise<string> {
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const uid = userData?.user?.id || 'guest';
+      const safeExt = (file.name.split('.').pop() || 'jpg').replace(/[^a-zA-Z0-9]/g, '');
+      const filePath = `${uid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${safeExt || 'jpg'}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from(MEDIA_BUCKET)
+        .upload(filePath, file, { upsert: false });
+
+      if (uploadError) {
+        return fallbackDataUrl;
+      }
+
+      const { data: publicData } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(filePath);
+      return publicData?.publicUrl || fallbackDataUrl;
+    } catch {
+      return fallbackDataUrl;
+    }
+  }
+
+  // حفظ المنشور أو التحديث الدائم في جدول posts في Supabase
+  async function persistPostToSupabase(item: ActivityPostItem) {
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const userId = userData?.user?.id ?? null;
+
+      const { data: inserted, error } = await supabase
+        .from('posts')
+        .insert({
+          user_id: userId,
+          author_name: item.authorName,
+          author_handle: item.authorHandle || displayHandle,
+          headline: item.headline,
+          content: item.content || null,
+          image_url: item.image || null,
+          kind: item.kind,
+        })
+        .select()
+        .single();
+
+      if (!error && inserted?.id) {
+        setActivityPosts((prev) =>
+          prev.map((p) => (p.id === item.id ? { ...p, dbId: String(inserted.id) } : p))
+        );
+      }
+    } catch {
+      // يظل محفوظاً محلياً حتى إعادة المزامنة
+    }
+  }
+
   const photoPosts = activityPosts.filter((p) => Boolean(p.image));
   const interestsList = interestsText
     .split(/[,،\n]+/)
@@ -358,45 +477,45 @@ export default function ProfileTab() {
 
   const handlePickImage = async (
     e: React.ChangeEvent<HTMLInputElement>,
-    onLoaded: (dataUrl: string, fileName: string) => void
+    onLoaded: (imageUrl: string, fileName: string) => void
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const rawDataUrl = await readRawFileAsDataUrl(file);
-    if (rawDataUrl) {
-      onLoaded(rawDataUrl, file.name);
-    }
+    if (!rawDataUrl) return;
+    const finalUrl = await uploadToWaslMedia(file, rawDataUrl);
+    onLoaded(finalUrl, file.name);
     e.target.value = '';
   };
 
   const pushActivityPost = (item: ActivityPostItem) => {
-    setActivityPosts((prev) => [
-      {
-        ...item,
-        liked: false,
-        likesCount: 0,
-        sharesCount: 0,
-        comments: [],
-      },
-      ...prev,
-    ]);
+    const fullItem: ActivityPostItem = {
+      ...item,
+      liked: false,
+      likesCount: 0,
+      sharesCount: 0,
+      comments: [],
+    };
+    setActivityPosts((prev) => [fullItem, ...prev]);
+    void persistPostToSupabase(fullItem);
+
     if (typeof store.addPost === 'function') {
       store.addPost({
-        id: item.id,
-        authorName: item.authorName,
-        authorHandle: item.authorHandle,
-        authorAvatar: item.authorAvatar,
-        content: item.content ? `${item.headline} — ${item.content}` : item.headline,
-        image: item.image,
-        createdAt: item.createdAt,
+        id: fullItem.id,
+        authorName: fullItem.authorName,
+        authorHandle: fullItem.authorHandle,
+        authorAvatar: fullItem.authorAvatar,
+        content: fullItem.content ? `${fullItem.headline} — ${fullItem.content}` : fullItem.headline,
+        image: fullItem.image,
+        createdAt: fullItem.createdAt,
       });
     }
   };
 
-  const handleCoverChange = (dataUrl: string) => {
-    setCoverImage(dataUrl);
+  const handleCoverChange = (imageUrl: string) => {
+    setCoverImage(imageUrl);
     if (typeof store.updateProfile === 'function') {
-      store.updateProfile({ coverImage: dataUrl, cover: dataUrl });
+      store.updateProfile({ coverImage: imageUrl, cover: imageUrl });
     }
     pushActivityPost({
       id: `cover-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -404,37 +523,37 @@ export default function ProfileTab() {
       authorHandle: displayHandle,
       authorAvatar: avatarImage || undefined,
       headline: `قام ${displayName} بتحديث صورة الغلاف`,
-      image: dataUrl,
+      image: imageUrl,
       createdAt: 'الآن',
       kind: 'cover',
     });
   };
 
-  const handleAvatarChange = (dataUrl: string) => {
-    setAvatarImage(dataUrl);
+  const handleAvatarChange = (imageUrl: string) => {
+    setAvatarImage(imageUrl);
     if (typeof store.updateProfile === 'function') {
-      store.updateProfile({ avatar: dataUrl });
+      store.updateProfile({ avatar: imageUrl });
     }
     pushActivityPost({
       id: `avatar-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       authorName: displayName,
       authorHandle: displayHandle,
-      authorAvatar: dataUrl,
+      authorAvatar: imageUrl,
       headline: `قام ${displayName} بتحديث صورة ملفه الشخصي`,
-      image: dataUrl,
+      image: imageUrl,
       createdAt: 'الآن',
       kind: 'avatar',
     });
   };
 
-  const handleAddHighlight = (dataUrl: string, fileName: string) => {
+  const handleAddHighlight = (imageUrl: string, fileName: string) => {
     const cleanTitle = fileName.replace(/\.[^/.]+$/, '').slice(0, 18) || 'قصة بارزة';
     setHighlights((prev) => [
       ...prev,
       {
         id: `hl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         title: cleanTitle,
-        image: dataUrl,
+        image: imageUrl,
       },
     ]);
   };
@@ -522,13 +641,22 @@ export default function ProfileTab() {
     }
   };
 
-  const handleDeletePost = (postId: string) => {
+  const handleDeletePost = async (postId: string) => {
+    const target = activityPosts.find((p) => p.id === postId);
     setActivityPosts((prev) => prev.filter((p) => p.id !== postId));
+
+    if (target?.dbId) {
+      try {
+        await supabase.from('posts').delete().eq('id', target.dbId);
+      } catch {
+        // تجاهل
+      }
+    }
   };
 
   return (
     <div dir="rtl" className="mx-auto max-w-2xl space-y-4 pb-8 text-slate-100">
-      {/* مدخلات معرض الصور المخفية (بدون أي قيود على الملفات) */}
+      {/* مدخلات معرض الصور المخفية */}
       <input
         ref={coverInputRef}
         type="file"
@@ -1010,7 +1138,7 @@ export default function ProfileTab() {
 
                     <button
                       type="button"
-                      onClick={() => handleDeletePost(post.id)}
+                      onClick={() => void handleDeletePost(post.id)}
                       title="حذف المنشور"
                       aria-label="حذف المنشور"
                       className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-950/40 hover:text-rose-400 transition"
@@ -1075,7 +1203,7 @@ export default function ProfileTab() {
 
                     <button
                       type="button"
-                      onClick={() => handleSharePost(post)}
+                      onClick={() => void handleSharePost(post)}
                       className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-950/70 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800/80 transition"
                     >
                       <Share2 size={14} className="text-purple-400" />
