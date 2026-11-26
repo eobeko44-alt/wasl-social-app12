@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ChevronLeft, MoreHorizontal, Trash2, X } from 'lucide-react';
 import {
+  fetchSavedAccountsFromSupabase,
   getSavedAccounts,
   removeSavedAccount,
   saveAccountToDevice,
@@ -26,24 +27,26 @@ export function SavedAccountsModal({
   const [manageMode, setManageMode] = useState(false);
 
   useEffect(() => {
-    if (open) {
-      setAccounts(getSavedAccounts());
-      setManageMode(false);
-    }
+    if (!open) return;
+    setAccounts(getSavedAccounts());
+    setManageMode(false);
+    void fetchSavedAccountsFromSupabase().then((list) => {
+      setAccounts(list);
+    });
   }, [open]);
 
   if (!open) return null;
 
-  const handleSelect = (account: SavedAccountItem) => {
+  const handleSelect = async (account: SavedAccountItem) => {
     if (manageMode) return;
-    const updated = saveAccountToDevice(account);
+    const updated = await saveAccountToDevice(account);
     setAccounts(updated);
     onSelectAccount(account);
     onClose();
   };
 
-  const handleDelete = (id: string) => {
-    const updated = removeSavedAccount(id);
+  const handleDelete = async (id: string) => {
+    const updated = await removeSavedAccount(id);
     setAccounts(updated);
   };
 
@@ -89,18 +92,18 @@ export function SavedAccountsModal({
           <div className="rounded-2xl border border-white/10 bg-[#242526] p-8 text-center space-y-2">
             <p className="text-sm font-bold text-white">لا توجد حسابات محفوظة بعد</p>
             <p className="text-xs text-slate-400">
-              عند تسجيل الدخول بأي حساب سيتم حفظه هنا للدخول السريع.
+              عند تسجيل الدخول بأي حساب سيتم حفظه في قاعدة البيانات للدخول السريع.
             </p>
           </div>
         ) : (
           accounts.map((acc) => (
             <div
               key={acc.id}
-              onClick={() => handleSelect(acc)}
+              onClick={() => void handleSelect(acc)}
               role="button"
               tabIndex={0}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') handleSelect(acc);
+                if (e.key === 'Enter' || e.key === ' ') void handleSelect(acc);
               }}
               className="flex items-center justify-between rounded-2xl border border-white/15 bg-[#242526] px-4 py-3.5 shadow-sm hover:bg-[#2d2f31] active:scale-[0.99] transition cursor-pointer"
             >
@@ -127,7 +130,7 @@ export function SavedAccountsModal({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleDelete(acc.id);
+                    void handleDelete(acc.id);
                   }}
                   aria-label={`إزالة ${acc.name}`}
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 transition"
@@ -173,3 +176,5 @@ export function SavedAccountsModal({
     </div>
   );
 }
+
+export default SavedAccountsModal;
