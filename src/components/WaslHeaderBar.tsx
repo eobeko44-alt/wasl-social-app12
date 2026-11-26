@@ -10,6 +10,15 @@ import {
   Calendar,
   Video,
   ChevronLeft,
+  ChevronRight,
+  Search,
+  ShieldCheck,
+  Lock,
+  KeyRound,
+  UserCog,
+  CheckCircle2,
+  SlidersHorizontal,
+  Trash2,
   X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -134,7 +143,9 @@ export function WaslHeaderBar({
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(true);
-  const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
+  const [settingsScreenOpen, setSettingsScreenOpen] = useState(false);
+  const [settingsSearch, setSettingsSearch] = useState('');
+  const [settingsNotice, setSettingsNotice] = useState('');
 
   const [isPublicAccount, setIsPublicAccount] = useState<boolean>(() => {
     try {
@@ -205,6 +216,13 @@ export function WaslHeaderBar({
       // تجاهل
     }
   }, [language]);
+
+  const showTempNotice = (msg: string) => {
+    setSettingsNotice(msg);
+    setTimeout(() => {
+      setSettingsNotice('');
+    }, 2500);
+  };
 
   const [storyModalOpen, setStoryModalOpen] = useState(false);
   const [storyText, setStoryText] = useState('');
@@ -476,6 +494,10 @@ export function WaslHeaderBar({
     event: 'اكتب اسم المناسبة أو موعدها...',
     live: 'اكتب عنوان البث المباشر...',
   };
+
+  const qSettings = settingsSearch.trim().toLowerCase();
+  const matchSettingsItem = (label: string) =>
+    !qSettings || label.toLowerCase().includes(qSettings);
 
   return (
     <div dir="rtl" className="w-full bg-slate-950 text-slate-100 select-none">
@@ -763,7 +785,6 @@ export function WaslHeaderBar({
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-xs p-0 sm:p-4">
           <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#1c1d21] text-white shadow-2xl flex flex-col justify-between">
             <div>
-              {/* الهيدر العلوي */}
               <div className="flex items-center justify-between border-b border-white/10 bg-[#242529] px-4 py-3">
                 <div className="flex items-center gap-3">
                   <button
@@ -791,7 +812,6 @@ export function WaslHeaderBar({
                 </button>
               </div>
 
-              {/* معلومات الحساب والخصوصية */}
               <div className="px-4 pt-3.5 pb-2">
                 <div className="flex items-center gap-3">
                   {userAvatar ? (
@@ -814,7 +834,6 @@ export function WaslHeaderBar({
                   </div>
                 </div>
 
-                {/* مساحة الكتابة */}
                 <div className="mt-3.5">
                   <textarea
                     rows={selectedTheme === 'none' ? 3 : 4}
@@ -876,7 +895,6 @@ export function WaslHeaderBar({
                 )}
               </div>
 
-              {/* شريط الألوان */}
               <div className="flex items-center gap-2 border-t border-white/10 bg-[#242529]/80 px-3 py-2">
                 <button
                   type="button"
@@ -918,7 +936,6 @@ export function WaslHeaderBar({
                 </button>
               </div>
 
-              {/* قائمة الخيارات */}
               <div className="divide-y divide-white/5 border-t border-white/10 bg-[#1c1d21]">
                 {composerOptions.map((item) => (
                   <button
@@ -934,7 +951,6 @@ export function WaslHeaderBar({
               </div>
             </div>
 
-            {/* زر النشر العريض في الأسفل */}
             <div className="sticky bottom-0 bg-[#1c1d21] p-3 border-t border-white/10">
               <button
                 type="button"
@@ -1101,45 +1117,19 @@ export function WaslHeaderBar({
                   <div className="border-t border-slate-800/90 p-2 space-y-1.5 bg-slate-950/90">
                     <button
                       type="button"
-                      onClick={() => setAccountSettingsOpen((prev) => !prev)}
+                      onClick={() => {
+                        setDrawerOpen(false);
+                        setSettingsSearch('');
+                        setSettingsScreenOpen(true);
+                      }}
                       className="w-full flex items-center justify-between rounded-xl bg-slate-900/85 border border-slate-800 px-3 py-2.5 text-xs font-bold text-slate-100 hover:border-cyan-500/35 transition"
                     >
                       <span className="flex items-center gap-2">
                         <span>👤</span>
                         <span>الإعدادات</span>
                       </span>
-                      <span className="text-[11px] text-cyan-400">
-                        {accountSettingsOpen ? 'إغلاق' : 'فتح'}
-                      </span>
+                      <span className="text-[11px] text-cyan-400">فتح</span>
                     </button>
-
-                    {accountSettingsOpen && (
-                      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-2.5 space-y-2 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] text-slate-300">
-                            نوع الحساب: <strong>{isPublicAccount ? 'عام 🌐' : 'خاص 🔒'}</strong>
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setIsPublicAccount((prev) => !prev)}
-                            className="rounded-lg bg-cyan-500/15 border border-cyan-500/30 px-2.5 py-1 text-[10px] font-bold text-cyan-300"
-                          >
-                            تغيير
-                          </button>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDrawerOpen(false);
-                            onSelectTab('profile');
-                          }}
-                          className="w-full rounded-lg bg-slate-950 border border-slate-800 py-1.5 text-[11px] font-bold text-cyan-300 hover:bg-slate-800 transition"
-                        >
-                          إدارة بيانات الملف الشخصي
-                        </button>
-                      </div>
-                    )}
 
                     <div className="flex items-center justify-between rounded-xl bg-slate-900/85 border border-slate-800 px-3 py-2.5">
                       <span className="flex items-center gap-2 text-xs font-bold text-slate-100">
@@ -1197,6 +1187,281 @@ export function WaslHeaderBar({
           </div>
 
           <div className="flex-1" onClick={() => setDrawerOpen(false)} />
+        </div>
+      )}
+
+      {/* شاشة الإعدادات والخصوصية الكاملة عند الضغط على «الإعدادات» */}
+      {settingsScreenOpen && (
+        <div
+          dir="rtl"
+          className="fixed inset-0 z-50 overflow-y-auto bg-[#18191a] text-[#e4e6eb]"
+        >
+          <div className="sticky top-0 z-20 flex items-center justify-between border-b border-white/10 bg-[#242526]/95 backdrop-blur px-4 py-3">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setSettingsScreenOpen(false)}
+                aria-label="رجوع"
+                className="flex h-9 w-9 items-center justify-center rounded-full text-slate-200 hover:bg-white/10 transition"
+              >
+                <ChevronRight size={22} />
+              </button>
+              <h2 className="text-base font-extrabold text-white">الإعدادات والخصوصية</h2>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSettingsScreenOpen(false)}
+              aria-label="إغلاق"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-slate-300 hover:bg-white/10 transition"
+            >
+              <Search size={18} />
+            </button>
+          </div>
+
+          <div className="mx-auto max-w-2xl space-y-5 p-4 pb-10">
+            <div className="flex items-center gap-2.5 rounded-full bg-[#3a3b3c] px-4 py-2.5">
+              <Search size={16} className="text-slate-400 shrink-0" />
+              <input
+                type="text"
+                value={settingsSearch}
+                onChange={(e) => setSettingsSearch(e.target.value)}
+                placeholder="بحث في الإعدادات"
+                className="w-full bg-transparent text-xs text-white placeholder:text-slate-400 outline-none"
+              />
+              {settingsSearch && (
+                <button
+                  type="button"
+                  onClick={() => setSettingsSearch('')}
+                  className="text-slate-400 hover:text-white"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            {settingsNotice && (
+              <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3.5 py-2 text-xs font-bold text-cyan-300">
+                {settingsNotice}
+              </div>
+            )}
+
+            {/* بطاقة حساب وِصل */}
+            <div className="rounded-2xl border border-white/10 bg-[#242526] p-4 space-y-3.5 shadow">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-black tracking-wide text-cyan-400">وِصل</span>
+                <span className="text-[11px] text-slate-400">{currentUserHandle}</span>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-extrabold text-white">حساب وِصل</h3>
+                <p className="mt-0.5 text-xs leading-relaxed text-slate-400">
+                  يمكنك إدارة بيانات ملفك الشخصي، الخصوصية، وتفضيلات الحساب في وِصل.
+                </p>
+              </div>
+
+              <div className="space-y-3 pt-1">
+                {matchSettingsItem('التفاصيل الشخصية الملف الشخصي') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettingsScreenOpen(false);
+                      onSelectTab('profile');
+                    }}
+                    className="flex w-full items-center justify-between text-right py-1 hover:opacity-85 transition"
+                  >
+                    <span className="flex items-center gap-3 text-xs font-bold text-slate-200">
+                      <UserCog size={18} className="text-slate-400 shrink-0" />
+                      <span>التفاصيل الشخصية</span>
+                    </span>
+                    <span className="text-[11px] text-cyan-400">{currentUserName}</span>
+                  </button>
+                )}
+
+                {matchSettingsItem('كلمة السر والأمان') && (
+                  <button
+                    type="button"
+                    onClick={() => showTempNotice('حماية الحساب نشطة وجلساتك مؤمنة')}
+                    className="flex w-full items-center justify-between text-right py-1 hover:opacity-85 transition"
+                  >
+                    <span className="flex items-center gap-3 text-xs font-bold text-slate-200">
+                      <KeyRound size={18} className="text-slate-400 shrink-0" />
+                      <span>كلمة السر والأمان</span>
+                    </span>
+                    <span className="text-[11px] text-slate-400">نشط</span>
+                  </button>
+                )}
+
+                {matchSettingsItem('تفضيلات المحتوى') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettingsScreenOpen(false);
+                      onSelectTab('feed');
+                    }}
+                    className="flex w-full items-center justify-between text-right py-1 hover:opacity-85 transition"
+                  >
+                    <span className="flex items-center gap-3 text-xs font-bold text-slate-200">
+                      <SlidersHorizontal size={18} className="text-slate-400 shrink-0" />
+                      <span>تفضيلات المحتوى</span>
+                    </span>
+                    <span className="text-[11px] text-slate-400">العام</span>
+                  </button>
+                )}
+
+                {matchSettingsItem('التحقق') && (
+                  <button
+                    type="button"
+                    onClick={() => showTempNotice('حالة الحساب موثّقة محلياً في وِصل')}
+                    className="flex w-full items-center justify-between text-right py-1 hover:opacity-85 transition"
+                  >
+                    <span className="flex items-center gap-3 text-xs font-bold text-slate-200">
+                      <CheckCircle2 size={18} className="text-slate-400 shrink-0" />
+                      <span>التحقق</span>
+                    </span>
+                    <span className="text-[11px] text-emerald-400">مفعّل</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="border-t border-white/10 pt-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettingsScreenOpen(false);
+                    onSelectTab('profile');
+                  }}
+                  className="text-xs font-bold text-[#4599FF] hover:underline"
+                >
+                  إدارة بيانات الملف الشخصي
+                </button>
+              </div>
+            </div>
+
+            {/* قسم الأدوات والموارد */}
+            <div className="space-y-3 pt-1">
+              <div>
+                <h3 className="text-sm font-extrabold text-white">الأدوات والموارد</h3>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  تساعدك الأدوات التي نوفرها على التحكم في خصوصيتك وإدارتها.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {matchSettingsItem('نوع الحساب عام خاص الخصوصية') && (
+                  <div className="flex items-center justify-between rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3">
+                    <span className="flex items-center gap-3 text-xs font-bold text-white">
+                      <Lock size={18} className="text-slate-300 shrink-0" />
+                      <span>نوع الحساب: {isPublicAccount ? 'عام' : 'خاص'}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsPublicAccount((prev) => {
+                          const next = !prev;
+                          showTempNotice(
+                            next ? 'تم تحويل الحساب إلى عام' : 'تم تحويل الحساب إلى خاص'
+                          );
+                          return next;
+                        });
+                      }}
+                      className="rounded-lg bg-cyan-500/15 border border-cyan-500/30 px-3 py-1 text-[11px] font-bold text-cyan-300"
+                    >
+                      تغيير
+                    </button>
+                  </div>
+                )}
+
+                {matchSettingsItem('التحقق من الخصوصية') && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      showTempNotice(
+                        isPublicAccount
+                          ? 'حسابك عام ويمكن للجميع متابعة منشوراتك'
+                          : 'حسابك خاص ويقتصر على جهات اتصالك'
+                      )
+                    }
+                    className="flex w-full items-center gap-3 rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3 text-right text-xs font-bold text-white hover:bg-white/5 transition"
+                  >
+                    <ShieldCheck size={18} className="text-slate-300 shrink-0" />
+                    <span>التحقق من الخصوصية</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* قسم التفضيلات */}
+            <div className="space-y-3 pt-1">
+              <div>
+                <h3 className="text-sm font-extrabold text-white">التفضيلات</h3>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  يمكنك تخصيص تجربتك على تطبيق وِصل.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {matchSettingsItem('الوضع المظلم') && (
+                  <div className="flex items-center justify-between rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3">
+                    <span className="flex items-center gap-3 text-xs font-bold text-white">
+                      <span>🌙</span>
+                      <span>الوضع المظلم</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setDarkMode((prev) => !prev)}
+                      aria-label="تبديل الوضع المظلم"
+                      className={`relative h-6 w-11 rounded-full transition ${
+                        darkMode ? 'bg-cyan-500' : 'bg-slate-600'
+                      }`}
+                    >
+                      <span
+                        className={`block h-4 w-4 rounded-full bg-white transition-transform ${
+                          darkMode ? '-translate-x-6' : '-translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                )}
+
+                {matchSettingsItem('اللغة العربية English') && (
+                  <button
+                    type="button"
+                    onClick={() => setLanguage((prev) => (prev === 'ar' ? 'en' : 'ar'))}
+                    className="flex w-full items-center justify-between rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3 text-xs font-bold text-white hover:bg-white/5 transition"
+                  >
+                    <span className="flex items-center gap-3">
+                      <span className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] font-black text-cyan-300">
+                        Aa
+                      </span>
+                      <span>اللغة</span>
+                    </span>
+                    <span className="rounded-lg bg-purple-500/15 border border-purple-500/30 px-2.5 py-0.5 text-[11px] font-bold text-purple-300">
+                      {language === 'ar' ? 'العربية' : 'English'}
+                    </span>
+                  </button>
+                )}
+
+                {matchSettingsItem('مسح الكاش المحلي') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        localStorage.removeItem('wasl_profile_meta_v3');
+                        showTempNotice('تم مسح الكاش المحلي بنجاح');
+                      } catch {
+                        showTempNotice('تعذر مسح الكاش الآن');
+                      }
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3 text-right text-xs font-bold text-rose-300 hover:bg-white/5 transition"
+                  >
+                    <Trash2 size={18} className="text-rose-400 shrink-0" />
+                    <span>مسح الكاش المحلي</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
