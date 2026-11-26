@@ -13,6 +13,45 @@ function setSharedProfile(next: User) {
   profileListeners.forEach((fn) => fn(next));
 }
 
+const THEME_STORAGE_KEY = 'wasl_dark_mode';
+
+function readInitialDarkMode(): boolean {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved === null) return true;
+    return saved === 'true';
+  } catch {
+    return true;
+  }
+}
+
+let sharedDarkMode = readInitialDarkMode();
+const themeListeners = new Set<(next: boolean) => void>();
+
+function applyThemeToDocument(isDark: boolean) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, String(isDark));
+    const root = document.documentElement;
+    if (isDark) {
+      root.classList.add('dark');
+      root.classList.remove('light');
+      root.style.colorScheme = 'dark';
+    } else {
+      root.classList.remove('dark');
+      root.classList.add('light');
+      root.style.colorScheme = 'light';
+    }
+  } catch {
+    // تجاهل أخطاء التخزين
+  }
+}
+
+function setSharedDarkMode(next: boolean) {
+  sharedDarkMode = next;
+  applyThemeToDocument(next);
+  themeListeners.forEach((fn) => fn(next));
+}
+
 export function useAppStore() {
   const [users, setUsers] = useState<User[]>(mockUsers);
   const [posts, setPosts] = useState<Post[]>(mockPosts);
@@ -20,6 +59,7 @@ export function useAppStore() {
   const [stories, setStories] = useState<Story[]>(mockStories);
   const [profile, setProfile] = useState<User>(sharedProfile);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(mockConversations[0].id);
+  const [darkMode, setDarkMode] = useState<boolean>(sharedDarkMode);
 
   useEffect(() => {
     setProfile(sharedProfile);
@@ -27,6 +67,19 @@ export function useAppStore() {
     return () => {
       profileListeners.delete(setProfile);
     };
+  }, []);
+
+  useEffect(() => {
+    applyThemeToDocument(sharedDarkMode);
+    setDarkMode(sharedDarkMode);
+    themeListeners.add(setDarkMode);
+    return () => {
+      themeListeners.delete(setDarkMode);
+    };
+  }, []);
+
+  const toggleDarkMode = useCallback(() => {
+    setSharedDarkMode(!sharedDarkMode);
   }, []);
 
   const totalUnread = useMemo(
@@ -177,6 +230,8 @@ export function useAppStore() {
     totalUnread,
     discoverPeople,
     contacts,
+    darkMode,
+    toggleDarkMode,
     addFriend,
     addContact,
     addContactByHandle,
