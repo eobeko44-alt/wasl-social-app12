@@ -318,7 +318,6 @@ export default function ProfileTab() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const highlightInputRef = useRef<HTMLInputElement | null>(null);
 
-  // حفظ بيانات الملف الشخصي (الصورة الشخصية، الغلاف، والنبذة/التفاصيل) في جدول profiles بـ Supabase
   async function syncProfileToSupabase(overrides?: {
     avatar_url?: string;
     cover_url?: string;
