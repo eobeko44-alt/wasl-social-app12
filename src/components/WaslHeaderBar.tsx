@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 export type WaslTabKey = 'feed' | 'chats' | 'contacts' | 'profile';
 
@@ -35,6 +35,10 @@ interface WaslHeaderBarProps {
   onLogout?: () => void;
 }
 
+const PRIVACY_STORAGE_KEY = 'wasl_account_is_public_v1';
+const DARK_MODE_STORAGE_KEY = 'wasl_dark_mode_v1';
+const LANG_STORAGE_KEY = 'wasl_lang_v1';
+
 export function WaslHeaderBar({
   activeTab,
   onSelectTab,
@@ -57,6 +61,83 @@ export function WaslHeaderBar({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // فتح وطي قائمة "الإعدادات والخصوصية" داخل القائمة الجانبية
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(true);
+  const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
+
+  // خصوصية الحساب
+  const [isPublicAccount, setIsPublicAccount] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(PRIVACY_STORAGE_KEY);
+      if (saved !== null) return saved === 'true';
+      const profileRaw = localStorage.getItem('wasl_profile_meta_v3');
+      if (profileRaw) {
+        const parsed = JSON.parse(profileRaw);
+        if (typeof parsed?.isPublicAccount === 'boolean') return parsed.isPublicAccount;
+      }
+    } catch {
+      // تجاهل خطأ القراءة
+    }
+    return true;
+  });
+
+  // الوضع المظلم
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(DARK_MODE_STORAGE_KEY);
+      if (saved !== null) return saved === 'true';
+    } catch {
+      // تجاهل
+    }
+    return true;
+  });
+
+  // اللغة
+  const [language, setLanguage] = useState<'ar' | 'en'>(() => {
+    try {
+      const saved = localStorage.getItem(LANG_STORAGE_KEY);
+      if (saved === 'en' || saved === 'ar') return saved;
+    } catch {
+      // تجاهل
+    }
+    return 'ar';
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PRIVACY_STORAGE_KEY, String(isPublicAccount));
+      const profileRaw = localStorage.getItem('wasl_profile_meta_v3');
+      if (profileRaw) {
+        const parsed = JSON.parse(profileRaw);
+        localStorage.setItem(
+          'wasl_profile_meta_v3',
+          JSON.stringify({ ...parsed, isPublicAccount })
+        );
+      }
+    } catch {
+      // تجاهل خطأ التخزين
+    }
+  }, [isPublicAccount]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DARK_MODE_STORAGE_KEY, String(darkMode));
+      document.documentElement.classList.toggle('dark', darkMode);
+    } catch {
+      // تجاهل
+    }
+  }, [darkMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LANG_STORAGE_KEY, language);
+      document.documentElement.lang = language;
+      document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr';
+    } catch {
+      // تجاهل
+    }
+  }, [language]);
 
   // حالة القصص + معرض الصور للقصة
   const [storyModalOpen, setStoryModalOpen] = useState(false);
@@ -93,7 +174,6 @@ export function WaslHeaderBar({
     { key: 'profile', label: 'حسابي', icon: '👤' },
   ];
 
-  // فتح معرض التلفون للقصة مباشرة
   const openStoryGallery = () => {
     if (storyFileInputRef.current) {
       storyFileInputRef.current.value = '';
@@ -132,7 +212,6 @@ export function WaslHeaderBar({
     resetStoryModal();
   };
 
-  // فتح معرض التلفون للمنشور عند الضغط على زر «صورة»
   const openPostGallery = () => {
     if (postFileInputRef.current) {
       postFileInputRef.current.value = '';
@@ -189,7 +268,7 @@ export function WaslHeaderBar({
         className="hidden"
       />
 
-      {/* 1. الهيدر العلوي: اسم التطبيق + (+ قصة) + (🔍 بحث أصدقاء) + (☰ قائمة جانبية) */}
+      {/* 1. الهيدر العلوي */}
       <div className="flex items-center justify-between px-4 pt-3 pb-2">
         <span className="text-2xl font-black tracking-tight bg-gradient-to-l from-cyan-400 to-purple-500 bg-clip-text text-transparent">
           وِصل
@@ -340,7 +419,7 @@ export function WaslHeaderBar({
         })}
       </nav>
 
-      {/* 3. شريط «بم تفكر؟» الصغير فقط + شريط القصص */}
+      {/* 3. شريط «بم تفكر؟» + شريط القصص */}
       {activeTab === 'feed' && (
         <>
           <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-slate-900">
@@ -374,7 +453,6 @@ export function WaslHeaderBar({
             </button>
           </div>
 
-          {/* 4. شريط القصص */}
           <div className="flex gap-2.5 overflow-x-auto px-4 pt-2.5 pb-3.5 border-b border-slate-800/80">
             {stories.map((story) => {
               if (story.isCreate) {
@@ -454,7 +532,7 @@ export function WaslHeaderBar({
         </>
       )}
 
-      {/* نافذة إنشاء منشور (كلام كتابي فقط أو صورة من المعرض + كلام كتابي) */}
+      {/* نافذة إنشاء منشور */}
       {postModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
           <form
@@ -529,7 +607,7 @@ export function WaslHeaderBar({
         </div>
       )}
 
-      {/* نافذة إتمام ونشر القصة بعد اختيار الصورة من المعرض */}
+      {/* نافذة إتمام ونشر القصة */}
       {storyModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
           <form
@@ -594,8 +672,9 @@ export function WaslHeaderBar({
       {/* القائمة الجانبية عند الضغط على ☰ */}
       {drawerOpen && (
         <div className="fixed inset-0 z-50 flex justify-start bg-black/65 backdrop-blur-xs">
-          <div className="w-72 max-w-[82vw] h-full bg-slate-900 border-l border-purple-500/25 p-4 flex flex-col justify-between shadow-2xl">
-            <div className="space-y-4">
+          <div className="w-80 max-w-[85vw] h-full overflow-y-auto bg-slate-900 border-l border-purple-500/25 p-4 flex flex-col justify-between shadow-2xl space-y-4">
+            <div className="space-y-3">
+              {/* رأس القائمة */}
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-black text-white">{currentUserName}</p>
@@ -612,6 +691,7 @@ export function WaslHeaderBar({
                 </button>
               </div>
 
+              {/* روابط سريعة */}
               <div className="space-y-1.5">
                 <button
                   type="button"
@@ -661,6 +741,107 @@ export function WaslHeaderBar({
                     <span>تبديل الحساب</span>
                     <span>⇄</span>
                   </button>
+                )}
+              </div>
+
+              {/* زر الإعدادات والخصوصية والقائمة المنسدلة (الإعدادات - اللغة - الوضع المظلم) */}
+              <div className="rounded-2xl border border-purple-500/20 bg-slate-950/75 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setSettingsMenuOpen((prev) => !prev)}
+                  className="w-full flex items-center justify-between px-3.5 py-3 text-xs font-black text-white hover:bg-slate-900/70 transition"
+                >
+                  <span className="flex items-center gap-2">
+                    <span>⚙️</span>
+                    <span>الإعدادات والخصوصية</span>
+                  </span>
+                  <span className="text-cyan-400 text-xs">{settingsMenuOpen ? '⌃' : '⌄'}</span>
+                </button>
+
+                {settingsMenuOpen && (
+                  <div className="border-t border-slate-800/90 p-2 space-y-1.5 bg-slate-950/90">
+                    {/* 1. الإعدادات */}
+                    <button
+                      type="button"
+                      onClick={() => setAccountSettingsOpen((prev) => !prev)}
+                      className="w-full flex items-center justify-between rounded-xl bg-slate-900/85 border border-slate-800 px-3 py-2.5 text-xs font-bold text-slate-100 hover:border-cyan-500/35 transition"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span>👤</span>
+                        <span>الإعدادات</span>
+                      </span>
+                      <span className="text-[11px] text-cyan-400">
+                        {accountSettingsOpen ? 'إغلاق' : 'فتح'}
+                      </span>
+                    </button>
+
+                    {accountSettingsOpen && (
+                      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-2.5 space-y-2 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-slate-300">
+                            نوع الحساب: <strong>{isPublicAccount ? 'عام 🌐' : 'خاص 🔒'}</strong>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setIsPublicAccount((prev) => !prev)}
+                            className="rounded-lg bg-cyan-500/15 border border-cyan-500/30 px-2.5 py-1 text-[10px] font-bold text-cyan-300"
+                          >
+                            تغيير
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDrawerOpen(false);
+                            onSelectTab('profile');
+                          }}
+                          className="w-full rounded-lg bg-slate-950 border border-slate-800 py-1.5 text-[11px] font-bold text-cyan-300 hover:bg-slate-800 transition"
+                        >
+                          إدارة بيانات الملف الشخصي
+                        </button>
+                      </div>
+                    )}
+
+                    {/* 2. الوضع المظلم */}
+                    <div className="flex items-center justify-between rounded-xl bg-slate-900/85 border border-slate-800 px-3 py-2.5">
+                      <span className="flex items-center gap-2 text-xs font-bold text-slate-100">
+                        <span>🌙</span>
+                        <span>الوضع المظلم</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setDarkMode((prev) => !prev)}
+                        aria-label="تبديل الوضع المظلم"
+                        className={`relative h-6 w-11 rounded-full transition ${
+                          darkMode ? 'bg-cyan-500' : 'bg-slate-700'
+                        }`}
+                      >
+                        <span
+                          className={`block h-4 w-4 rounded-full bg-white transition-transform ${
+                            darkMode ? '-translate-x-6' : '-translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+
+                    {/* 3. اللغة */}
+                    <button
+                      type="button"
+                      onClick={() => setLanguage((prev) => (prev === 'ar' ? 'en' : 'ar'))}
+                      className="w-full flex items-center justify-between rounded-xl bg-slate-900/85 border border-slate-800 px-3 py-2.5 text-xs font-bold text-slate-100 hover:border-purple-500/35 transition"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-black text-cyan-300">
+                          Aa
+                        </span>
+                        <span>اللغة</span>
+                      </span>
+                      <span className="rounded-lg bg-purple-500/15 border border-purple-500/30 px-2.5 py-0.5 text-[11px] font-bold text-purple-300">
+                        {language === 'ar' ? 'العربية' : 'English'}
+                      </span>
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
