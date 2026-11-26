@@ -66,9 +66,55 @@ const META_STORAGE_KEY = 'wasl_profile_meta_v3';
 const POSTS_STORAGE_KEY = 'wasl_profile_posts_v3';
 const AVATAR_KEY = 'wasl_persisted_avatar_v1';
 const COVER_KEY = 'wasl_persisted_cover_v1';
+const OVERRIDE_NAME_KEY = 'wasl_override_name_v1';
+const OVERRIDE_HANDLE_KEY = 'wasl_override_handle_v1';
 const DB_NAME = 'wasl_profile_db_v1';
 const DB_STORE = 'profile_state';
 const MEDIA_BUCKET = 'wasl-media';
+
+function resolveIdentityFromStorage(fallbackName: string, fallbackHandle: string): {
+  name: string;
+  handle: string;
+} {
+  let resolvedName = '';
+  let resolvedHandle = '';
+
+  try {
+    const ovName = localStorage.getItem(OVERRIDE_NAME_KEY)?.trim() || '';
+    const ovHandle = localStorage.getItem(OVERRIDE_HANDLE_KEY)?.trim() || '';
+    if (ovName) resolvedName = ovName;
+    if (ovHandle) resolvedHandle = ovHandle;
+  } catch {
+    // تجاهل
+  }
+
+  if (!resolvedName || !resolvedHandle) {
+    try {
+      const raw = localStorage.getItem(META_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (!resolvedName) {
+          resolvedName =
+            typeof parsed?.name === 'string' && parsed.name.trim()
+              ? parsed.name.trim()
+              : typeof parsed?.full_name === 'string' && parsed.full_name.trim()
+                ? parsed.full_name.trim()
+                : '';
+        }
+        if (!resolvedHandle && typeof parsed?.username === 'string' && parsed.username.trim()) {
+          resolvedHandle = parsed.username.trim();
+        }
+      }
+    } catch {
+      // تجاهل
+    }
+  }
+
+  const finalName = resolvedName || fallbackName;
+  const rawH = resolvedHandle || fallbackHandle || '@abobaker096605';
+  const finalHandle = rawH.startsWith('@') ? rawH : `@${rawH}`;
+  return { name: finalName, handle: finalHandle };
+}
 
 function openProfileDB(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
@@ -169,7 +215,9 @@ async function saveAllPersistence(data: PersistedProfileData): Promise<void> {
 
   const { posts, avatarImage, coverImage, ...metaOnly } = data;
   try {
-    localStorage.setItem(META_STORAGE_KEY, JSON.stringify(metaOnly));
+    const prevRaw = localStorage.getItem(META_STORAGE_KEY);
+    const prevMeta = prevRaw ? JSON.parse(prevRaw) : {};
+    localStorage.setItem(META_STORAGE_KEY, JSON.stringify({ ...prevMeta, ...metaOnly }));
   } catch {
     // تجاهل
   }
@@ -203,10 +251,30 @@ export default function ProfileTab() {
 
   const initialSaved = loadLocalSnapshot();
 
-  const displayName =
+  const fallbackStoreName =
     profile.name && profile.name !== 'أنت' ? String(profile.name) : 'abobaker096605';
-  const rawHandle = profile.username || '@abobaker096605';
-  const displayHandle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
+  const fallbackStoreHandle = profile.username || '@abobaker096605';
+
+  const initialIdentity = resolveIdentityFromStorage(fallbackStoreName, fallbackStoreHandle);
+  const [displayName, setDisplayName] = useState<string>(initialIdentity.name);
+  const [displayHandle, setDisplayHandle] = useState<string>(initialIdentity.handle);
+
+  useEffect(() => {
+    const syncIdentity = () => {
+      const nextId = resolveIdentityFromStorage(fallbackStoreName, fallbackStoreHandle);
+      setDisplayName(nextId.name);
+      setDisplayHandle(nextId.handle);
+    };
+
+    syncIdentity();
+    window.addEventListener('wasl-profile-updated', syncIdentity);
+    window.addEventListener('storage', syncIdentity);
+    return () => {
+      window.removeEventListener('wasl-profile-updated', syncIdentity);
+      window.removeEventListener('storage', syncIdentity);
+    };
+  }, [fallbackStoreName, fallbackStoreHandle]);
+
   const displayPhone = profile.phone || profile.phone_number || '+966 5X XXX XXXX';
 
   const [activeSubTab, setActiveSubTab] = useState<ProfileSectionTab>('all');
@@ -270,24 +338,24 @@ export default function ProfileTab() {
           text.includes('صورة ملفه الشخصي') || text.includes('صورة الملف الشخصي');
         const isCoverUpdate = text.includes('صورة الغلاف');
 
-        let headline = `نشر ${displayName}`;
+        let headline = `نشر ${initialIdentity.name}`;
         let kind: ActivityPostItem['kind'] = 'post';
 
         if (isAvatarUpdate) {
-          headline = `قام ${displayName} بتحديث صورة ملفه الشخصي`;
+          headline = `قام ${initialIdentity.name} بتحديث صورة ملفه الشخصي`;
           kind = 'avatar';
         } else if (isCoverUpdate) {
-          headline = `قام ${displayName} بتحديث صورة الغلاف`;
+          headline = `قام ${initialIdentity.name} بتحديث صورة الغلاف`;
           kind = 'cover';
         } else if (img) {
-          headline = `نشر ${displayName} صورة`;
+          headline = `نشر ${initialIdentity.name} صورة`;
           kind = 'photo';
         }
 
         return {
           id: String(p.id || `store-post-${idx}`),
-          authorName: displayName,
-          authorHandle: displayHandle,
+          authorName: initialIdentity.name,
+          authorHandle: initialIdentity.handle,
           authorAvatar:
             baseSaved.avatarImage ||
             (typeof p.authorAvatar === 'string' ? p.authorAvatar : undefined),
