@@ -1,17 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
-  Globe,
-  MessageCircle,
-  Users,
-  User,
-  Plus,
   ArrowRight,
   Image as ImageIcon,
   Music,
   UserPlus,
   MapPin,
   Smile,
+  MessageCircle,
   Calendar,
   Video,
   ChevronLeft,
@@ -29,15 +25,6 @@ import ProfileTab from '@/components/profile/ProfileTab';
 type Tab = 'feed' | 'chats' | 'contacts' | 'profile';
 
 const MEDIA_BUCKET = 'wasl-media';
-
-const TABS: { id: Tab; label: string; icon: typesOfIcon }[] = [
-  { id: 'feed', label: 'العام', icon: Globe },
-  { id: 'chats', label: 'المحادثات', icon: MessageCircle },
-  { id: 'contacts', label: 'جهات الاتصال', icon: Users },
-  { id: 'profile', label: 'حسابي', icon: User },
-];
-
-type typesOfIcon = React.ComponentType<{ size?: number; className?: string }>;
 
 const BG_THEMES = [
   { id: 'none', label: 'افتراضي', className: 'bg-transparent text-white' },
@@ -135,7 +122,6 @@ export default function App() {
   const [composerOpen, setComposerOpen] = useState(false);
 
   const store = useAppStore() as Record<string, any>;
-  const totalUnread: number = typeof store.totalUnread === 'number' ? store.totalUnread : 0;
   const profile = store.profile || {};
   const createPost = typeof store.createPost === 'function' ? store.createPost : null;
   const addPost = typeof store.addPost === 'function' ? store.addPost : null;
@@ -402,39 +388,6 @@ export default function App() {
         onSelectFriend={(_friend: FriendItem) => setTab('chats')}
       />
 
-      {/* شريط التبويبات */}
-      <nav className="sticky top-0 z-20 border-b border-slate-800/90 bg-slate-950/90 backdrop-blur">
-        <div className="mx-auto flex max-w-2xl items-center justify-around px-2">
-          {TABS.map(({ id, label, icon: Icon }) => {
-            const active = tab === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setTab(id)}
-                className={`relative flex flex-1 flex-col items-center gap-1 py-2.5 text-xs font-bold transition ${
-                  active ? 'text-cyan-400' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <div className="relative">
-                  <Icon size={19} />
-                  {id === 'chats' && totalUnread > 0 && (
-                    <span className="absolute -top-1.5 -left-2.5 rounded-full bg-purple-600 px-1.5 text-[10px] font-black text-white">
-                      {totalUnread}
-                    </span>
-                  )}
-                </div>
-                <span>{label}</span>
-                {active && (
-                  <span className="absolute bottom-0 h-0.5 w-14 rounded-full bg-gradient-to-l from-cyan-400 to-purple-500" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </nav>
-
-      {/* المحتوى الرئيسي */}
       <main className="mx-auto w-full max-w-2xl flex-1 px-3 py-4">
         {tab === 'feed' && <FeedTab />}
         {tab === 'chats' && <ChatsTab />}
@@ -442,22 +395,10 @@ export default function App() {
         {tab === 'profile' && <ProfileTab />}
       </main>
 
-      {/* زر إضافة سريع عائم */}
-      <button
-        type="button"
-        onClick={() => setComposerOpen(true)}
-        aria-label="إنشاء منشور"
-        className="fixed bottom-5 left-5 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600 to-purple-600 text-white shadow-xl shadow-black/40 hover:brightness-110 transition"
-      >
-        <Plus size={22} />
-      </button>
-
-      {/* نافذة إنشاء منشور المنبثقة */}
       {composerOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-xs p-0 sm:p-4">
           <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#1c1d21] text-white shadow-2xl flex flex-col justify-between">
             <div>
-              {/* هيدر النافذة */}
               <div className="flex items-center justify-between border-b border-white/10 bg-[#242529] px-4 py-3">
                 <div className="flex items-center gap-3">
                   <button
@@ -485,7 +426,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* الحساب والخصوصية */}
               <div className="px-4 pt-3.5 pb-2">
                 <div className="flex items-center gap-3">
                   <img
@@ -502,7 +442,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* منطقة النص */}
                 <div className="mt-3.5">
                   <textarea
                     value={postText}
@@ -562,7 +501,6 @@ export default function App() {
                 )}
               </div>
 
-              {/* شريط الألوان */}
               <div className="flex items-center gap-2 border-t border-white/10 bg-[#242529]/80 px-3 py-2">
                 <button
                   type="button"
@@ -604,7 +542,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* قائمة الخيارات */}
               <div className="divide-y divide-white/5 border-t border-white/10 bg-[#1c1d21]">
                 {modalOptions.map((item) => (
                   <button
@@ -620,7 +557,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* زر النشر العريض في الأسفل */}
             <div className="sticky bottom-0 bg-[#1c1d21] p-3 border-t border-white/10">
               <button
                 type="button"
