@@ -142,6 +142,26 @@ export function WaslHeaderBar({
   const [searchQuery, setSearchQuery] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  const [displayName, setDisplayName] = useState<string>(currentUserName);
+  const [displayHandle, setDisplayHandle] = useState<string>(
+    currentUserHandle.startsWith('@') ? currentUserHandle : `@${currentUserHandle}`
+  );
+
+  useEffect(() => {
+    setDisplayName(currentUserName);
+  }, [currentUserName]);
+
+  useEffect(() => {
+    setDisplayHandle(
+      currentUserHandle.startsWith('@') ? currentUserHandle : `@${currentUserHandle}`
+    );
+  }, [currentUserHandle]);
+
+  const [editDetailsOpen, setEditDetailsOpen] = useState(false);
+  const [editNameInput, setEditNameInput] = useState('');
+  const [editHandleInput, setEditHandleInput] = useState('');
+  const [savingDetails, setSavingDetails] = useState(false);
+
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(true);
   const [settingsScreenOpen, setSettingsScreenOpen] = useState(false);
   const [settingsSearch, setSettingsSearch] = useState('');
@@ -222,6 +242,65 @@ export function WaslHeaderBar({
     setTimeout(() => {
       setSettingsNotice('');
     }, 2500);
+  };
+
+  const openEditDetailsModal = () => {
+    setEditNameInput(displayName);
+    setEditHandleInput(displayHandle.replace(/^@/, ''));
+    setEditDetailsOpen(true);
+  };
+
+  const handleSaveDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanedName = editNameInput.trim();
+    const cleanedHandle = editHandleInput.trim().replace(/^@+/, '').replace(/\s+/g, '');
+    if (!cleanedName) {
+      showTempNotice('الرجاء إدخال الاسم أولاً');
+      return;
+    }
+    const formattedHandle = cleanedHandle ? `@${cleanedHandle}` : '@wasl_user';
+
+    setSavingDetails(true);
+    try {
+      setDisplayName(cleanedName);
+      setDisplayHandle(formattedHandle);
+
+      try {
+        const raw = localStorage.getItem('wasl_profile_meta_v3');
+        const prevMeta = raw ? JSON.parse(raw) : {};
+        localStorage.setItem(
+          'wasl_profile_meta_v3',
+          JSON.stringify({
+            ...prevMeta,
+            name: cleanedName,
+            username: formattedHandle,
+          })
+        );
+      } catch {
+        // تجاهل خطأ التخزين
+      }
+
+      try {
+        const { data: userData } = await supabase.auth.getUser();
+        const uid = userData?.user?.id;
+        if (uid) {
+          await supabase
+            .from('profiles')
+            .update({
+              full_name: cleanedName,
+              username: formattedHandle.replace(/^@/, ''),
+            })
+            .eq('id', uid);
+        }
+      } catch {
+        // تجاهل خطأ الشبكة
+      }
+
+      setEditDetailsOpen(false);
+      showTempNotice('تم تحديث الاسم والمعرف بنجاح');
+    } finally {
+      setSavingDetails(false);
+    }
   };
 
   const [storyModalOpen, setStoryModalOpen] = useState(false);
@@ -385,18 +464,18 @@ export function WaslHeaderBar({
         finalImageUrl = await uploadPostImageToStorage(postSelectedFile, postImageData);
       }
 
-      const normalizedHandle = currentUserHandle.startsWith('@')
-        ? currentUserHandle
-        : `@${currentUserHandle}`;
+      const normalizedHandle = displayHandle.startsWith('@')
+        ? displayHandle
+        : `@${displayHandle}`;
 
       const { data: userData } = await supabase.auth.getUser();
       const userId = userData?.user?.id ?? null;
 
       await supabase.from('posts').insert({
         user_id: userId,
-        author_name: currentUserName,
+        author_name: displayName,
         author_handle: normalizedHandle,
-        headline: finalImageUrl ? `نشر ${currentUserName} صورة` : `نشر ${currentUserName}`,
+        headline: finalImageUrl ? `نشر ${displayName} صورة` : `نشر ${displayName}`,
         content: finalContent || null,
         image_url: finalImageUrl || null,
         kind: finalImageUrl ? 'photo' : 'post',
@@ -674,12 +753,12 @@ export function WaslHeaderBar({
             {userAvatar ? (
               <img
                 src={userAvatar}
-                alt={currentUserName}
+                alt={displayName}
                 className="h-10 w-10 shrink-0 rounded-full object-cover border border-cyan-500/35"
               />
             ) : (
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 border border-purple-500/30 text-sm font-black text-cyan-300">
-                {currentUserName.slice(0, 1)}
+                {displayName.slice(0, 1)}
               </div>
             )}
 
@@ -817,16 +896,16 @@ export function WaslHeaderBar({
                   {userAvatar ? (
                     <img
                       src={userAvatar}
-                      alt={currentUserName}
+                      alt={displayName}
                       className="h-11 w-11 shrink-0 rounded-full border border-white/15 object-cover"
                     />
                   ) : (
                     <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-800 text-sm font-bold text-white border border-white/15">
-                      {currentUserName.slice(0, 1)}
+                      {displayName.slice(0, 1)}
                     </div>
                   )}
                   <div>
-                    <p className="text-sm font-bold text-white leading-tight">{currentUserName}</p>
+                    <p className="text-sm font-bold text-white leading-tight">{displayName}</p>
                     <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-white/15 bg-[#2a2b30] px-2 py-0.5 text-[11px] font-semibold text-slate-200">
                       <span>{isPublicAccount ? 'العامة' : 'خاص'}</span>
                       <span>▾</span>
@@ -1034,9 +1113,9 @@ export function WaslHeaderBar({
             <div className="space-y-3">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-black text-white">{currentUserName}</p>
+                  <p className="truncate text-sm font-black text-white">{displayName}</p>
                   <p className="truncate text-[11px] text-cyan-400" dir="ltr">
-                    {currentUserHandle}
+                    {displayHandle}
                   </p>
                 </div>
                 <button
@@ -1250,7 +1329,9 @@ export function WaslHeaderBar({
             <div className="rounded-2xl border border-white/10 bg-[#242526] p-4 space-y-3.5 shadow">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-black tracking-wide text-cyan-400">وِصل</span>
-                <span className="text-[11px] text-slate-400">{currentUserHandle}</span>
+                <span className="text-[11px] text-slate-400" dir="ltr">
+                  {displayHandle}
+                </span>
               </div>
 
               <div>
@@ -1264,17 +1345,14 @@ export function WaslHeaderBar({
                 {matchSettingsItem('التفاصيل الشخصية الملف الشخصي') && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setSettingsScreenOpen(false);
-                      onSelectTab('profile');
-                    }}
-                    className="flex w-full items-center justify-between text-right py-1 hover:opacity-85 transition"
+                    onClick={openEditDetailsModal}
+                    className="flex w-full items-center justify-between text-right py-1.5 px-2 -mx-2 rounded-xl hover:bg-white/5 transition"
                   >
                     <span className="flex items-center gap-3 text-xs font-bold text-slate-200">
-                      <UserCog size={18} className="text-slate-400 shrink-0" />
+                      <UserCog size={18} className="text-cyan-400 shrink-0" />
                       <span>التفاصيل الشخصية</span>
                     </span>
-                    <span className="text-[11px] text-cyan-400">{currentUserName}</span>
+                    <span className="text-[11px] font-bold text-cyan-400">{displayName}</span>
                   </button>
                 )}
 
@@ -1327,10 +1405,7 @@ export function WaslHeaderBar({
               <div className="border-t border-white/10 pt-3">
                 <button
                   type="button"
-                  onClick={() => {
-                    setSettingsScreenOpen(false);
-                    onSelectTab('profile');
-                  }}
+                  onClick={openEditDetailsModal}
                   className="text-xs font-bold text-[#4599FF] hover:underline"
                 >
                   إدارة بيانات الملف الشخصي
@@ -1462,6 +1537,76 @@ export function WaslHeaderBar({
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* نافذة تعديل الاسم والمعرف (@) عند الضغط على «التفاصيل الشخصية» */}
+      {editDetailsOpen && (
+        <div
+          dir="rtl"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
+        >
+          <form
+            onSubmit={(e) => void handleSaveDetails(e)}
+            className="w-full max-w-sm rounded-2xl border border-cyan-500/25 bg-[#242526] p-4 space-y-4 text-white shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+              <h3 className="text-sm font-black text-white">تعديل التفاصيل الشخصية</h3>
+              <button
+                type="button"
+                onClick={() => setEditDetailsOpen(false)}
+                aria-label="إغلاق"
+                className="rounded-lg bg-white/5 p-1 text-slate-400 hover:text-white transition"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-slate-300">الاسم في الملف الشخصي</label>
+              <input
+                type="text"
+                value={editNameInput}
+                onChange={(e) => setEditNameInput(e.target.value)}
+                placeholder="مثال: abobaker0966"
+                className="w-full rounded-xl border border-white/15 bg-[#18191a] px-3.5 py-2.5 text-xs font-bold text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-slate-300">اسم المستخدم (@)</label>
+              <div
+                dir="ltr"
+                className="flex items-center rounded-xl border border-white/15 bg-[#18191a] px-3 py-2 focus-within:border-cyan-400"
+              >
+                <span className="text-xs font-extrabold text-cyan-400 mr-1">@</span>
+                <input
+                  type="text"
+                  value={editHandleInput}
+                  onChange={(e) => setEditHandleInput(e.target.value.replace(/^@+/, ''))}
+                  placeholder="abobaker0966"
+                  className="w-full bg-transparent text-xs font-bold text-white placeholder:text-slate-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setEditDetailsOpen(false)}
+                className="flex-1 rounded-xl border border-white/10 bg-[#18191a] py-2.5 text-xs font-bold text-slate-300 hover:bg-white/5 transition"
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                disabled={savingDetails}
+                className="flex-1 rounded-xl bg-gradient-to-l from-cyan-500 to-blue-600 py-2.5 text-xs font-extrabold text-white shadow hover:opacity-95 disabled:opacity-50 transition"
+              >
+                {savingDetails ? 'جاري الحفظ...' : 'حفظ التغييرات'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>
