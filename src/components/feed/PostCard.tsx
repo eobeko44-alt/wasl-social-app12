@@ -4,25 +4,35 @@ import type { Post } from '@/types';
 import { useAppStore } from '@/store/useAppStore';
 import { Avatar } from '@/components/UserCard';
 
-function formatPostDate(rawDate: unknown): string {
-  if (!rawDate || rawDate === 'الآن') return 'الآن';
-  const d = new Date(String(rawDate));
-  if (Number.isNaN(d.getTime())) return String(rawDate);
+function formatFacebookTime(rawDate: unknown): string {
+  if (!rawDate) return 'الآن';
+  const str = String(rawDate).trim();
+  if (!str || str === 'الآن') return 'الآن';
 
-  const now = new Date();
-  const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+  const parsed = new Date(str);
+  if (Number.isNaN(parsed.getTime())) {
+    return str;
+  }
+
+  const nowMs = Date.now();
+  const postMs = parsed.getTime();
+  const diffSec = Math.max(0, Math.floor((nowMs - postMs) / 1000));
+
   if (diffSec < 60) return 'الآن';
-  if (diffSec < 3600) return `منذ ${Math.floor(diffSec / 60)} د`;
 
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = d.getFullYear();
-  const hours24 = d.getHours();
-  const minutes = String(d.getMinutes()).padStart(2, '0');
-  const period = hours24 >= 12 ? 'م' : 'ص';
-  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} د`;
 
-  return `${day}/${month}/${year} · ${hours12}:${minutes} ${period}`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours} س`;
+
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 30) return `${diffDays} ي`;
+
+  const day = String(parsed.getDate()).padStart(2, '0');
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const year = parsed.getFullYear();
+  return `${day}/${month}/${year}`;
 }
 
 export default function PostCard({ post }: { post: Post }) {
@@ -33,7 +43,10 @@ export default function PostCard({ post }: { post: Post }) {
   const p = post as Record<string, any>;
   const isMe =
     p.author?.id === 'me' ||
-    (profile?.id && p.userId && String(p.userId) === String(profile.id));
+    (profile?.id && p.userId && String(p.userId) === String(profile.id)) ||
+    String(p.authorHandle || p.author?.username || '').replace(/^@/, '') ===
+      String(profile?.username || '').replace(/^@/, '') ||
+    String(p.authorHandle || p.author?.username || '') === '@you';
 
   const authorName = String(
     p.author?.name || p.authorName || (isMe ? profile?.name : '') || 'مستخدم وصل'
@@ -42,15 +55,24 @@ export default function PostCard({ post }: { post: Post }) {
     p.author?.username || p.authorHandle || (isMe ? profile?.username : '') || '@wasl_user'
   );
   const cleanHandle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
-  const avatarSrc = String(p.author?.avatar || (isMe ? profile?.avatar : '') || '').trim();
-  const isOnline = Boolean(p.author?.isOnline);
 
+  const avatarSrc = String(
+    p.authorAvatar ||
+      p.author?.avatar ||
+      (isMe ? profile?.avatar || profile?.avatarUrl || profile?.avatar_url : '') ||
+      ''
+  ).trim();
+
+  const isOnline = Boolean(p.author?.isOnline);
   const bodyText = p.text ?? p.content ?? '';
   const imageSrc = p.imageUrl || p.image;
   const comments = Array.isArray(p.comments) ? p.comments : [];
   const likesCount = Number(p.likes ?? 0);
   const likedByMe = Boolean(p.likedByMe);
-  const formattedTime = formatPostDate(p.createdAt);
+
+  const timeLabel = formatFacebookTime(
+    p.createdAt || p.created_at || p.timestamp
+  );
 
   const submitComment = () => {
     if (!commentText.trim()) return;
@@ -75,8 +97,10 @@ export default function PostCard({ post }: { post: Post }) {
             {authorName}
             {isMe && <span className="mr-1.5 text-xs font-normal text-cyan-400">(أنت)</span>}
           </p>
-          <p dir="ltr" className="truncate text-right text-xs text-slate-400">
-            {cleanHandle} · {formattedTime}
+          <p className="truncate text-xs text-slate-400">
+            <span>{cleanHandle}</span>
+            <span className="mx-1.5">·</span>
+            <span className="font-medium text-slate-300">{timeLabel}</span>
           </p>
         </div>
       </div>
@@ -141,8 +165,8 @@ export default function PostCard({ post }: { post: Post }) {
                   <p className="text-xs font-bold text-cyan-300">
                     {cName}
                     {cAuthor.id === 'me' && <span className="mr-1 font-normal text-slate-500">(أنت)</span>}
-                    <span dir="ltr" className="mr-2 text-[10px] font-normal text-slate-400">
-                      {formatPostDate(c.createdAt)}
+                    <span className="mr-2 text-[10px] font-normal text-slate-400">
+                      {formatFacebookTime(c.createdAt)}
                     </span>
                   </p>
                   <p className="text-sm text-slate-200">{c.text}</p>
