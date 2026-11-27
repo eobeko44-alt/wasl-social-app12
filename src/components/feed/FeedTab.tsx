@@ -12,7 +12,16 @@ import {
   Image as ImageIcon,
   Smile,
   ChevronDown,
+  ChevronLeft,
   BadgeCheck,
+  MoreHorizontal,
+  BellOff,
+  Bell,
+  Bookmark,
+  Flag,
+  Link2,
+  PlusCircle,
+  MinusCircle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/store/useAppStore';
@@ -76,6 +85,10 @@ interface FeedPostItem {
   likesCount: number;
   likedByMe: boolean;
   comments: PostCommentItem[];
+  interestState?: 'interested' | 'not_interested' | null;
+  saved?: boolean;
+  mutedNotifications?: boolean;
+  reported?: boolean;
 }
 
 let cachedFeedPosts: FeedPostItem[] | null = null;
@@ -192,6 +205,10 @@ function normalizeRow(row: any, currentUid: string | null): FeedPostItem {
     likesCount: typeof row?.likes_count === 'number' ? row.likes_count : 0,
     likedByMe: Boolean(currentUid && Array.isArray(row?.liked_by) && row.liked_by.includes(currentUid)),
     comments: sanitizeComments(row?.comments),
+    interestState: null,
+    saved: false,
+    mutedNotifications: false,
+    reported: false,
   };
 }
 
@@ -221,8 +238,19 @@ export default function FeedTab() {
   const [expandedRepliesIds, setExpandedRepliesIds] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState('');
 
+  // حالة قائمة الثلاث نقاط وشاشة "خيارات إضافية"
+  const [menuPostId, setMenuPostId] = useState<string | null>(null);
+  const [showExtraOptions, setShowExtraOptions] = useState(false);
+
   const commentInputRef = useRef<HTMLInputElement | null>(null);
   const mountedRef = useRef(true);
+
+  const showNotice = (msg: string) => {
+    setNotice(msg);
+    setTimeout(() => {
+      setNotice((prev) => (prev === msg ? '' : prev));
+    }, 2200);
+  };
 
   useEffect(() => {
     mountedRef.current = true;
@@ -305,6 +333,10 @@ export default function FeedTab() {
         likesCount: typeof p?.likesCount === 'number' ? p.likesCount : 0,
         likedByMe: Boolean(p?.likedByMe),
         comments: sanitizeComments(p?.comments),
+        interestState: null,
+        saved: false,
+        mutedNotifications: false,
+        reported: false,
       }));
 
     const seenContentAndImg = new Set<string>();
@@ -334,6 +366,23 @@ export default function FeedTab() {
     [mergedPosts, activeSheetPostId]
   );
 
+  const activeMenuPost = useMemo(
+    () => mergedPosts.find((p) => p.id === menuPostId) || null,
+    [mergedPosts, menuPostId]
+  );
+
+  const updateBothLists = (updater: (list: FeedPostItem[]) => FeedPostItem[]) => {
+    setPosts(updater);
+    if (cachedFeedPosts) {
+      cachedFeedPosts = updater(cachedFeedPosts);
+    }
+  };
+
+  const closeMenuModal = () => {
+    setMenuPostId(null);
+    setShowExtraOptions(false);
+  };
+
   const sendPostNotification = async (
     targetPost: FeedPostItem,
     type: 'like' | 'comment',
@@ -358,19 +407,14 @@ export default function FeedTab() {
 
   const handleToggleLike = (item: FeedPostItem) => {
     const willLike = !item.likedByMe;
-
-    const updater = (list: FeedPostItem[]) =>
+    updateBothLists((list) =>
       list.map((p) => {
         if (p.id !== item.id) return p;
         const nextLiked = !p.likedByMe;
         const nextCount = Math.max(0, p.likesCount + (nextLiked ? 1 : -1));
         return { ...p, likedByMe: nextLiked, likesCount: nextCount };
-      });
-
-    setPosts(updater);
-    if (cachedFeedPosts) {
-      cachedFeedPosts = updater(cachedFeedPosts);
-    }
+      })
+    );
 
     if (willLike) {
       void sendPostNotification(item, 'like');
@@ -378,7 +422,7 @@ export default function FeedTab() {
   };
 
   const handleToggleCommentLike = (postId: string, commentId: string) => {
-    const updater = (list: FeedPostItem[]) =>
+    updateBothLists((list) =>
       list.map((p) => {
         if (p.id !== postId) return p;
         return {
@@ -393,16 +437,12 @@ export default function FeedTab() {
             };
           }),
         };
-      });
-
-    setPosts(updater);
-    if (cachedFeedPosts) {
-      cachedFeedPosts = updater(cachedFeedPosts);
-    }
+      })
+    );
   };
 
   const handleToggleReplyLike = (postId: string, commentId: string, replyId: string) => {
-    const updater = (list: FeedPostItem[]) =>
+    updateBothLists((list) =>
       list.map((p) => {
         if (p.id !== postId) return p;
         return {
@@ -423,12 +463,8 @@ export default function FeedTab() {
             };
           }),
         };
-      });
-
-    setPosts(updater);
-    if (cachedFeedPosts) {
-      cachedFeedPosts = updater(cachedFeedPosts);
-    }
+      })
+    );
   };
 
   const handleStartReply = (commentId: string, authorName: string) => {
@@ -457,7 +493,7 @@ export default function FeedTab() {
         likedByMe: false,
       };
 
-      const updater = (list: FeedPostItem[]) =>
+      updateBothLists((list) =>
         list.map((p) => {
           if (p.id !== item.id) return p;
           return {
@@ -468,12 +504,8 @@ export default function FeedTab() {
                 : c
             ),
           };
-        });
-
-      setPosts(updater);
-      if (cachedFeedPosts) {
-        cachedFeedPosts = updater(cachedFeedPosts);
-      }
+        })
+      );
       setExpandedRepliesIds((prev) => ({ ...prev, [targetCommentId]: true }));
       setReplyingToComment(null);
       setNewCommentText('');
@@ -494,15 +526,11 @@ export default function FeedTab() {
       replies: [],
     };
 
-    const updater = (list: FeedPostItem[]) =>
+    updateBothLists((list) =>
       list.map((p) =>
         p.id === item.id ? { ...p, comments: [...p.comments, newComment] } : p
-      );
-
-    setPosts(updater);
-    if (cachedFeedPosts) {
-      cachedFeedPosts = updater(cachedFeedPosts);
-    }
+      )
+    );
     setNewCommentText('');
     void sendPostNotification(item, 'comment', cleaned);
   };
@@ -521,8 +549,7 @@ export default function FeedTab() {
       }
       if (navigator.clipboard) {
         await navigator.clipboard.writeText(shareText);
-        setNotice('تم نسخ نص المنشور');
-        setTimeout(() => setNotice(''), 2000);
+        showNotice('تم نسخ نص المنشور');
       }
     } catch {
       // تجاهل إلغاء المشاركة
@@ -530,14 +557,12 @@ export default function FeedTab() {
   };
 
   const handleDeletePost = async (item: FeedPostItem) => {
-    const filterFn = (list: FeedPostItem[]) => list.filter((p) => p.id !== item.id);
-    setPosts(filterFn);
-    if (cachedFeedPosts) {
-      cachedFeedPosts = filterFn(cachedFeedPosts);
-    }
+    updateBothLists((list) => list.filter((p) => p.id !== item.id));
     if (activeSheetPostId === item.id) {
       setActiveSheetPostId(null);
     }
+    closeMenuModal();
+    showNotice('تم حذف المنشور');
 
     if (item.dbId) {
       try {
@@ -610,11 +635,6 @@ export default function FeedTab() {
         </div>
       ) : (
         mergedPosts.map((item) => {
-          const canDelete = Boolean(
-            (currentUid && item.userId && currentUid === item.userId) ||
-              item.id.startsWith('post-') ||
-              item.id.startsWith('local-')
-          );
           const authorVerified = isVerifiedFounderId(item.userId);
           const safeComments = Array.isArray(item.comments) ? item.comments : [];
           const totalCommentsAndReplies = safeComments.reduce(
@@ -650,20 +670,25 @@ export default function FeedTab() {
                     <p className="text-[10px] text-slate-400">
                       {item.authorHandle ? `${item.authorHandle} · ` : ''}
                       {item.createdAt}
+                      {item.interestState === 'interested' ? ' · مهتم' : ''}
+                      {item.interestState === 'not_interested' ? ' · غير مهتم' : ''}
+                      {item.saved ? ' · محفوظ' : ''}
                     </p>
                   </div>
                 </div>
 
-                {canDelete && (
-                  <button
-                    type="button"
-                    onClick={() => void handleDeletePost(item)}
-                    aria-label="حذف المنشور"
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-950/50 hover:text-rose-300 transition"
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExtraOptions(false);
+                    setMenuPostId(item.id);
+                  }}
+                  title="خيارات المنشور"
+                  aria-label="خيارات المنشور"
+                  className="rounded-full p-1.5 text-slate-300 hover:bg-slate-800 hover:text-white transition"
+                >
+                  <MoreHorizontal size={18} />
+                </button>
               </div>
 
               {item.content && (
@@ -728,7 +753,213 @@ export default function FeedTab() {
         })
       )}
 
-      {/* نافذة التعليقات المنبثقة بأسلوب فيسبوك مع الرد والتفاعل */}
+      {/* القائمة السفلية للمنشور مطابقة للصور (مهتم / غير مهتم / حفظ المنشور / الإبلاغ عن المنشور / خيارات إضافية) */}
+      {activeMenuPost && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/70"
+          onClick={closeMenuModal}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-t-3xl bg-[#242526] text-[#e4e6eb] px-3 pt-2.5 pb-6 shadow-2xl space-y-2.5"
+          >
+            <div className="mx-auto h-1.5 w-11 rounded-full bg-[#5a5c5e]" />
+
+            {!showExtraOptions ? (
+              <>
+                <div className="overflow-hidden rounded-2xl bg-[#303134] divide-y divide-[#3e4042]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateBothLists((list) =>
+                        list.map((p) =>
+                          p.id === activeMenuPost.id
+                            ? { ...p, interestState: 'interested' }
+                            : p
+                        )
+                      );
+                      closeMenuModal();
+                      showNotice('سيظهر لك محتوى مشابه بشكل أكبر');
+                    }}
+                    className="flex w-full items-center justify-between px-4 py-3.5 text-right text-sm font-bold text-[#e4e6eb] hover:bg-[#3a3b3e] transition"
+                  >
+                    <span>
+                      {activeMenuPost.interestState === 'interested'
+                        ? 'مهتم ✓'
+                        : 'مهتم'}
+                    </span>
+                    <PlusCircle size={20} className="text-[#e4e6eb] shrink-0" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateBothLists((list) =>
+                        list.map((p) =>
+                          p.id === activeMenuPost.id
+                            ? { ...p, interestState: 'not_interested' }
+                            : p
+                        )
+                      );
+                      closeMenuModal();
+                      showNotice('سنقلل من ظهور محتوى مشابه');
+                    }}
+                    className="flex w-full items-center justify-between px-4 py-3.5 text-right text-sm font-bold text-[#e4e6eb] hover:bg-[#3a3b3e] transition"
+                  >
+                    <span>
+                      {activeMenuPost.interestState === 'not_interested'
+                        ? 'غير مهتم ✓'
+                        : 'غير مهتم'}
+                    </span>
+                    <MinusCircle size={20} className="text-[#e4e6eb] shrink-0" />
+                  </button>
+                </div>
+
+                <div className="overflow-hidden rounded-2xl bg-[#303134] divide-y divide-[#3e4042]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextSaved = !activeMenuPost.saved;
+                      updateBothLists((list) =>
+                        list.map((p) =>
+                          p.id === activeMenuPost.id ? { ...p, saved: nextSaved } : p
+                        )
+                      );
+                      closeMenuModal();
+                      showNotice(
+                        nextSaved
+                          ? 'تم حفظ المنشور في العناصر المحفوظة'
+                          : 'تمت إزالة المنشور من المحفوظات'
+                      );
+                    }}
+                    className="flex w-full items-center justify-between px-4 py-3.5 text-right text-sm font-bold text-[#e4e6eb] hover:bg-[#3a3b3e] transition"
+                  >
+                    <span>
+                      {activeMenuPost.saved ? 'إزالة من المحفوظات' : 'حفظ المنشور'}
+                    </span>
+                    <Bookmark
+                      size={20}
+                      className={
+                        activeMenuPost.saved
+                          ? 'fill-[#4599FF] text-[#4599FF] shrink-0'
+                          : 'text-[#e4e6eb] shrink-0'
+                      }
+                    />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateBothLists((list) =>
+                        list.map((p) =>
+                          p.id === activeMenuPost.id ? { ...p, reported: true } : p
+                        )
+                      );
+                      closeMenuModal();
+                      showNotice('تم إرسال البلاغ عن المنشور للمراجعة');
+                    }}
+                    className="flex w-full items-center justify-between px-4 py-3.5 text-right text-sm font-bold text-[#e4e6eb] hover:bg-[#3a3b3e] transition"
+                  >
+                    <span>
+                      {activeMenuPost.reported ? 'تم الإبلاغ عن المنشور ✓' : 'الإبلاغ عن المنشور'}
+                    </span>
+                    <Flag size={20} className="text-[#e4e6eb] shrink-0" />
+                  </button>
+                </div>
+
+                <div className="overflow-hidden rounded-2xl bg-[#303134]">
+                  <button
+                    type="button"
+                    onClick={() => setShowExtraOptions(true)}
+                    className="flex w-full items-center justify-between px-4 py-3.5 text-right text-sm font-bold text-[#e4e6eb] hover:bg-[#3a3b3e] transition"
+                  >
+                    <ChevronLeft size={20} className="text-[#b0b3b8] shrink-0" />
+                    <span>خيارات إضافية</span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between px-2 py-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowExtraOptions(false)}
+                    aria-label="رجوع"
+                    className="rounded-full p-1.5 text-[#e4e6eb] hover:bg-[#3a3b3e]"
+                  >
+                    <ChevronLeft size={20} className="rotate-180" />
+                  </button>
+                  <h3 className="text-sm font-extrabold text-[#e4e6eb]">خيارات إضافية</h3>
+                  <span className="w-7" />
+                </div>
+
+                <div className="overflow-hidden rounded-2xl bg-[#303134] divide-y divide-[#3e4042]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextMuted = !activeMenuPost.mutedNotifications;
+                      updateBothLists((list) =>
+                        list.map((p) =>
+                          p.id === activeMenuPost.id
+                            ? { ...p, mutedNotifications: nextMuted }
+                            : p
+                        )
+                      );
+                      closeMenuModal();
+                      showNotice(
+                        nextMuted
+                          ? 'تم إيقاف تشغيل الإشعارات لهذا المنشور'
+                          : 'تم تشغيل الإشعارات لهذا المنشور'
+                      );
+                    }}
+                    className="flex w-full items-center justify-between px-4 py-3.5 text-right text-sm font-bold text-[#e4e6eb] hover:bg-[#3a3b3e] transition"
+                  >
+                    <span>
+                      {activeMenuPost.mutedNotifications
+                        ? 'تشغيل الإشعارات لهذا المنشور'
+                        : 'إيقاف تشغيل الإشعارات لهذا المنشور'}
+                    </span>
+                    {activeMenuPost.mutedNotifications ? (
+                      <Bell size={20} className="text-[#4599FF] shrink-0" />
+                    ) : (
+                      <BellOff size={20} className="text-[#e4e6eb] shrink-0" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const shareUrl = `${window.location.origin}/post/${encodeURIComponent(
+                        activeMenuPost.id
+                      )}`;
+                      if (navigator.clipboard) {
+                        void navigator.clipboard.writeText(shareUrl);
+                      }
+                      closeMenuModal();
+                      showNotice('تم نسخ رابط المنشور');
+                    }}
+                    className="flex w-full items-center justify-between px-4 py-3.5 text-right text-sm font-bold text-[#e4e6eb] hover:bg-[#3a3b3e] transition"
+                  >
+                    <span>نسخ الرابط</span>
+                    <Link2 size={20} className="text-[#e4e6eb] shrink-0" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleDeletePost(activeMenuPost)}
+                    className="flex w-full items-center justify-between px-4 py-3.5 text-right text-sm font-bold text-rose-400 hover:bg-[#3a3b3e] transition"
+                  >
+                    <span>حذف المنشور</span>
+                    <Trash2 size={20} className="text-rose-400 shrink-0" />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* نافذة التعليقات المنبثقة */}
       {activePost && (
         <div
           dir="rtl"
