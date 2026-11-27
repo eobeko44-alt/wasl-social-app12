@@ -21,9 +21,11 @@ export default function PersistentChatBox({
   currentUserId: externalUserId,
 }: PersistentChatBoxProps) {
   const [myUserId, setMyUserId] = useState<string | null>(externalUserId ?? null);
-  const [messages, setMessages] = useState<PersistentMessage[]>([]);
+  const [messages, setMessages] = useState<PersistentMessage[]>(() => {
+    const uid = externalUserId ?? null;
+    return uid && peerId ? readCachedMessages(uid, peerId) : [];
+  });
   const [inputText, setInputText] = useState('');
-  const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -32,9 +34,13 @@ export default function PersistentChatBox({
       setMyUserId(externalUserId);
       return;
     }
+    let active = true;
     void getCurrentAuthUserId().then((id) => {
-      if (id) setMyUserId(id);
+      if (active && id) setMyUserId(id);
     });
+    return () => {
+      active = false;
+    };
   }, [externalUserId]);
 
   useEffect(() => {
@@ -65,36 +71,50 @@ export default function PersistentChatBox({
   }, [myUserId, peerId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    bottomRef.current?.scrollIntoView({ behavior: 'auto' });
   }, [messages.length]);
 
-  const handleSend = async (e: React.FormEvent) => {
+  const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = inputText.trim();
-    if (!trimmed || sending) return;
+    if (!trimmed) return;
 
-    setSending(true);
-    setNotice('');
-
-    const res = await sendPersistentMessage({
-      senderId: myUserId || '',
-      receiverId: peerId,
+    const senderId = myUserId || '';
+    const tempId = `temp-${Date.now()}`;
+    const optimisticMsg: PersistentMessage = {
+      id: tempId,
+      sender_id: senderId,
+      receiver_id: peerId,
       body: trimmed,
-    });
+      created_at: new Date().toISOString(),
+    };
 
-    setSending(false);
+    setNotice('');
+    setInputText('');
+    setMessages((prev) => [...prev, optimisticMsg]);
 
-    if (res.errorText) {
-      setNotice(res.errorText);
-      return;
-    }
+    void (async () => {
+      const res = await sendPersistentMessage({
+        senderId,
+        receiverId: peerId,
+        body: trimmed,
+      });
 
-    if (res.message) {
-      setMessages((prev) =>
-        prev.some((m) => m.id === res.message!.id) ? prev : [...prev, res.message!]
-      );
-      setInputText('');
-    }
+      if (res.errorText) {
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        setNotice(res.errorText);
+        return;
+      }
+
+      if (res.message) {
+        setMessages((prev) => {
+          const withoutTemp = prev.filter((m) => m.id !== tempId);
+          return withoutTemp.some((m) => m.id === res.message!.id)
+            ? withoutTemp
+            : [...withoutTemp, res.message!];
+        });
+      }
+    })();
   };
 
   return (
@@ -141,7 +161,7 @@ export default function PersistentChatBox({
         <div ref={bottomRef} />
       </div>
 
-      <form onSubmit={(e) => void handleSend(e)} className="flex items-center gap-2 border-t border-slate-800 p-2.5 bg-slate-950/70">
+      <form onSubmit={handleSend} className="flex items-center gap-2 border-t border-slate-800 p-2.5 bg-slate-950/70">
         <input
           type="text"
           value={inputText}
@@ -151,9 +171,8 @@ export default function PersistentChatBox({
         />
         <button
           type="submit"
-          disabled={sending}
           aria-label="إرسال الرسالة"
-          className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 text-white disabled:opacity-50"
+          className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 text-white"
         >
           <Send size={14} />
         </button>
