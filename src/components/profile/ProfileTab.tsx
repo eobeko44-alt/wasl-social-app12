@@ -106,7 +106,17 @@ function formatCompactCount(num: number): string {
       ? String(millions)
       : millions.toFixed(1).replace(/\.0$/, '');
     return `${formatted}M`;
-  
+  }
+  if (num >= 1_000) {
+    const thousands = num / 1_000;
+    const formatted = Number.isInteger(thousands)
+      ? String(thousands)
+      : thousands.toFixed(1).replace(/\.0$/, '');
+    return `${formatted}K`;
+  }
+  return String(num);
+}
+
 function buildDisplayFollowers(
   customList: FollowerPerson[],
   totalCount: number,
@@ -167,8 +177,8 @@ function VerifiedBlueBadge({ size = 18 }: { size?: number }) {
   );
 }
 
-const STORAGE_PREFIX = 'wasl_p2_';
-const DB_NAME = 'wasl_profile_db_v3';
+const STORAGE_PREFIX = 'wasl_p3_';
+const DB_NAME = 'wasl_profile_db_v4';
 const DB_STORE = 'profile_state_by_user';
 const MEDIA_BUCKET = 'wasl-media';
 
@@ -290,7 +300,6 @@ async function saveAllPersistence(uid: string, data: PersistedProfileData): Prom
   } catch {
     // تجاهل
   }
-
   await saveToIndexedDB(uid, data);
 }
 
@@ -356,7 +365,11 @@ export default function ProfileTab() {
 
   const isFounderAccount = isVerifiedFounder(currentUid, currentEmail);
 
-  const resetLocalViewForNewUser = (fallbackTitle: string, uid?: string | null, email?: string | null) => {
+  const resetLocalViewForNewUser = (
+    fallbackTitle: string,
+    uid?: string | null,
+    email?: string | null
+  ) => {
     const founder = isVerifiedFounder(uid, email);
     setDisplayName(fallbackTitle);
     setCoverImage('');
@@ -1019,7 +1032,6 @@ export default function ProfileTab() {
         </div>
       )}
 
-      {/* البطاقة الرئيسية: الغلاف + الصورة الشخصية + الاسم + المتابعون + الإحصائيات + الأزرار */}
       <section className="overflow-hidden rounded-2xl border border-purple-500/20 bg-slate-900/80 shadow-xl">
         <div className="relative h-44 w-full bg-gradient-to-l from-purple-700/60 via-slate-800 to-cyan-600/50">
           {coverImage && (
@@ -1188,7 +1200,6 @@ export default function ProfileTab() {
         </div>
       </section>
 
-      {/* نافذة قائمة المتابعون / يتابع الحقيقية */}
       {showFollowModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
@@ -1343,7 +1354,6 @@ export default function ProfileTab() {
         </div>
       )}
 
-      {/* نموذج تعديل التفاصيل الشخصية */}
       {editingDetails && (
         <form
           onSubmit={handleSaveDetails}
@@ -1433,7 +1443,6 @@ export default function ProfileTab() {
         </form>
       )}
 
-      {/* التفاصيل الشخصية والاهتمامات */}
       {(activeSubTab === 'all' || activeSubTab === 'about') && (
         <section className="rounded-2xl border border-slate-800 bg-slate-900/75 p-4 space-y-4">
           <div className="flex items-center justify-between">
@@ -1495,7 +1504,6 @@ export default function ProfileTab() {
         </section>
       )}
 
-      {/* أبرز القصص */}
       {activeSubTab === 'all' && (
         <section className="rounded-2xl border border-slate-800 bg-slate-900/75 p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -1541,7 +1549,6 @@ export default function ProfileTab() {
         </section>
       )}
 
-      {/* الأصدقاء */}
       {activeSubTab === 'all' && (
         <section className="rounded-2xl border border-slate-800 bg-slate-900/75 p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -1585,7 +1592,6 @@ export default function ProfileTab() {
         </section>
       )}
 
-      {/* قسم الصور */}
       {activeSubTab === 'photos' && (
         <section className="rounded-2xl border border-slate-800 bg-slate-900/75 p-4 space-y-3">
           <div className="flex items-center gap-1.5">
@@ -1612,7 +1618,6 @@ export default function ProfileTab() {
         </section>
       )}
 
-      {/* منشورات الملف الشخصي */}
       {activeSubTab === 'all' && (
         <section className="space-y-3">
           <h2 className="px-1 text-sm font-black text-white">المنشورات</h2>
