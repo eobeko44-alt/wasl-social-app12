@@ -140,12 +140,6 @@ function updateState(updater: (s: SharedState) => Partial<SharedState>) {
  *  واجهات التحكم بالحساب (تُستدعى من AuthGate)
  * ===================================================================== */
 
-/**
- * تفعيل حساب بعد تسجيل الدخول أو عند استعادة الجلسة.
- * - إذا كان user_id مختلفاً عن الحساب النشط: تُفرَّغ بيانات الحساب السابق
- *   من الذاكرة ومن التخزين المحلي بالكامل، ثم تُحمَّل بيانات الحساب الجديد.
- * - seed: بيانات أولية للملف الشخصي (الاسم، الصورة...) للحسابات الجديدة فقط.
- */
 export function activateUser(userId: string | null | undefined, seed?: Partial<User>) {
   if (!userId) {
     deactivateUser();
@@ -153,7 +147,6 @@ export function activateUser(userId: string | null | undefined, seed?: Partial<U
   }
   if (activeUserId === userId) return;
 
-  // حذف بيانات أي حساب آخر (حتى لو كانت من جلسة سابقة قبل إغلاق المتصفح)
   wipeUserStorage(userId);
 
   const persisted = loadPersistedState(userId);
@@ -169,7 +162,6 @@ export function activateUser(userId: string | null | undefined, seed?: Partial<U
   emit();
 }
 
-/** تسجيل الخروج: تفريغ كل بيانات الحساب من الحالة ومن التخزين المحلي */
 export function deactivateUser() {
   wipeUserStorage();
   activeUserId = null;
@@ -332,24 +324,54 @@ function sendMessage(conversationId: string, text: string) {
   }));
 }
 
-function openConversation(conversationId: string) {
+function openConversation(conversationId: string, meta?: { userName?: string; avatar?: string }) {
+  // 1. إذا كان المعرّف يطابق محادثة موجودة بالفعل
+  const byConvId = state.conversations.find((c) => c.id === conversationId);
+  if (byConvId) {
+    updateState((s) => ({
+      activeConversationId: byConvId.id,
+      conversations: s.conversations.map((c) => (c.id === byConvId.id ? { ...c, unread: 0 } : c)),
+    }));
+    return;
+  }
+
+  // 2. إذا كان المعرّف يطابق user.id لمحادثة موجودة بالفعل
+  const byUserId = state.conversations.find((c) => c.user?.id === conversationId);
+  if (byUserId) {
+    updateState((s) => ({
+      activeConversationId: byUserId.id,
+      conversations: s.conversations.map((c) => (c.id === byUserId.id ? { ...c, unread: 0 } : c)),
+    }));
+    return;
+  }
+
+  // 3. إنشاء محادثة جديدة فوراً لهذا المستخدم وتعيينها كمحادثة نشطة
+  const knownUser = state.users.find((u) => u.id === conversationId);
+  const cleanName = (meta?.userName || knownUser?.name || 'مستخدم وِصل').trim();
+  const cleanHandle =
+    knownUser?.username ||
+    `@${cleanName.toLowerCase().replace(/[^a-z0-9_]/g, '') || 'user'}`;
+
+  const targetUser: User = {
+    ...(knownUser ?? ({} as User)),
+    id: conversationId,
+    name: cleanName,
+    username: cleanHandle,
+    avatar: meta?.avatar || knownUser?.avatar || '',
+    phone: knownUser?.phone || '',
+    isOnline: knownUser?.isOnline ?? true,
+    isFriend: true,
+  };
+
+  const newConvId = `conv-${conversationId}`;
   updateState((s) => ({
-    activeConversationId: conversationId,
-    conversations: s.conversations.map((c) => (c.id === conversationId ? { ...c, unread: 0 } : c)),
+    conversations: [{ id: newConvId, user: targetUser, messages: [], unread: 0 }, ...s.conversations],
+    activeConversationId: newConvId,
   }));
 }
 
 function startConversationWith(user: User) {
-  const existing = state.conversations.find((c) => c.user.id === user.id);
-  if (existing) {
-    openConversation(existing.id);
-    return;
-  }
-  const id = nextId();
-  updateState((s) => ({
-    conversations: [{ id, user, messages: [], unread: 0 }, ...s.conversations],
-    activeConversationId: id,
-  }));
+  openConversation(user.id, { userName: user.name, avatar: user.avatar });
 }
 
 function markStorySeen(storyId: string) {
@@ -359,7 +381,6 @@ function markStorySeen(storyId: string) {
 }
 
 function updateProfile(updates: Partial<User>) {
-  // لا يُسمح بتغيير المعرّف: يبقى مرتبطاً بـ user_id الخاص بالجلسة
   const { id: _ignored, ...safeUpdates } = updates as Partial<User> & { id?: string };
   updateState((s) => ({ profile: { ...s.profile, ...safeUpdates } }));
 }
