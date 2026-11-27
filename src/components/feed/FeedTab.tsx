@@ -15,10 +15,12 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/store/useAppStore';
+import { VerifiedBlueBadge, isVerifiedFounderId } from '@/components/WaslHeaderBar';
 
 interface CommentReplyItem {
   id: string;
   author: string;
+  authorId?: string | null;
   avatar?: string;
   text: string;
   createdAt: string;
@@ -29,6 +31,7 @@ interface CommentReplyItem {
 interface PostCommentItem {
   id: string;
   author: string;
+  authorId?: string | null;
   avatar?: string;
   text: string;
   createdAt: string;
@@ -84,6 +87,7 @@ function sanitizeReplies(rawReplies: unknown): CommentReplyItem[] {
         typeof r.author === 'string' && r.author.trim()
           ? r.author.trim()
           : 'مستخدم وِصل',
+      authorId: typeof r.authorId === 'string' ? r.authorId : null,
       avatar:
         typeof r.avatar === 'string' && r.avatar.trim() ? r.avatar.trim() : undefined,
       text: typeof r.text === 'string' ? r.text : '',
@@ -121,6 +125,7 @@ function sanitizeComments(rawComments: unknown): PostCommentItem[] {
       return {
         id: typeof c.id === 'string' && c.id ? c.id : `cmt-${idx}-${Date.now()}`,
         author: authorVal,
+        authorId: typeof c.authorId === 'string' ? c.authorId : null,
         avatar:
           typeof c.avatar === 'string' && c.avatar.trim() ? c.avatar.trim() : undefined,
         text: textVal,
@@ -185,7 +190,6 @@ export default function FeedTab() {
   const [refreshing, setRefreshing] = useState(false);
   const [currentUid, setCurrentUid] = useState<string | null>(null);
 
-  // نافذة التعليقات المنبثقة (Bottom Sheet) مثل فيسبوك
   const [activeSheetPostId, setActiveSheetPostId] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<'relevant' | 'newest'>('relevant');
   const [newCommentText, setNewCommentText] = useState('');
@@ -424,6 +428,7 @@ export default function FeedTab() {
       const newReply: CommentReplyItem = {
         id: `rpl-${Date.now()}`,
         author: currentUserName,
+        authorId: currentUid,
         avatar: currentUserAvatar,
         text: cleaned,
         createdAt: 'الآن',
@@ -458,6 +463,7 @@ export default function FeedTab() {
     const newComment: PostCommentItem = {
       id: `cmt-${Date.now()}`,
       author: currentUserName,
+      authorId: currentUid,
       avatar: currentUserAvatar,
       text: cleaned,
       createdAt: 'الآن',
@@ -588,6 +594,7 @@ export default function FeedTab() {
               item.id.startsWith('post-') ||
               item.id.startsWith('local-')
           );
+          const authorVerified = isVerifiedFounderId(item.userId);
           const safeComments = Array.isArray(item.comments) ? item.comments : [];
           const totalCommentsAndReplies = safeComments.reduce(
             (acc, c) => acc + 1 + (Array.isArray(c.replies) ? c.replies.length : 0),
@@ -615,7 +622,10 @@ export default function FeedTab() {
                     </div>
                   )}
                   <div className="min-w-0">
-                    <p className="truncate text-xs font-extrabold text-white">{item.authorName}</p>
+                    <p className="flex items-center gap-1 text-xs font-extrabold text-white">
+                      <span className="truncate">{item.authorName}</span>
+                      {authorVerified && <VerifiedBlueBadge size={15} />}
+                    </p>
                     <p className="text-[10px] text-slate-400">
                       {item.authorHandle ? `${item.authorHandle} · ` : ''}
                       {item.createdAt}
@@ -708,7 +718,6 @@ export default function FeedTab() {
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-2xl mx-auto h-[84vh] rounded-t-3xl border-t border-white/10 bg-[#18191a] text-[#e4e6eb] flex flex-col overflow-hidden shadow-2xl"
           >
-            {/* مقبض علوي وشريط التفاعلات العلوي */}
             <div className="bg-[#242526] border-b border-white/10 px-4 pt-2 pb-2.5 space-y-2.5">
               <div className="mx-auto h-1.5 w-11 rounded-full bg-slate-500/70" />
 
@@ -756,7 +765,6 @@ export default function FeedTab() {
               </div>
             </div>
 
-            {/* شريط الفرز (الأكثر ملاءمة / الأحدث) */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#18191a]">
               <button
                 type="button"
@@ -768,12 +776,12 @@ export default function FeedTab() {
                 <span>{sortMode === 'relevant' ? 'الأكثر ملاءمة' : 'الأحدث'}</span>
                 <ChevronDown size={14} className="text-slate-400" />
               </button>
-              <span className="text-[11px] text-slate-400">
-                تعليقات منشور {activePost.authorName}
+              <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                <span>تعليقات منشور {activePost.authorName}</span>
+                {isVerifiedFounderId(activePost.userId) && <VerifiedBlueBadge size={12} />}
               </span>
             </div>
 
-            {/* قائمة التعليقات والردود */}
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
               {displayedSheetComments.length === 0 ? (
                 <div className="py-12 text-center space-y-1">
@@ -784,6 +792,7 @@ export default function FeedTab() {
                 displayedSheetComments.map((cmt) => {
                   const hasReplies = Array.isArray(cmt.replies) && cmt.replies.length > 0;
                   const showReplies = Boolean(expandedRepliesIds[cmt.id]);
+                  const commentVerified = isVerifiedFounderId(cmt.authorId);
 
                   return (
                     <div key={cmt.id} className="space-y-2">
@@ -804,7 +813,10 @@ export default function FeedTab() {
 
                         <div className="flex-1 min-w-0">
                           <div className="relative inline-block max-w-full rounded-2xl bg-[#2a2b2e] px-3.5 py-2">
-                            <p className="text-xs font-extrabold text-white">{cmt.author}</p>
+                            <p className="flex items-center gap-1 text-xs font-extrabold text-white">
+                              <span>{cmt.author}</span>
+                              {commentVerified && <VerifiedBlueBadge size={13} />}
+                            </p>
                             <p className="mt-0.5 whitespace-pre-line text-xs leading-relaxed text-slate-100">
                               {cmt.text}
                             </p>
@@ -843,7 +855,6 @@ export default function FeedTab() {
                             </button>
                           </div>
 
-                          {/* زر عرض الردود السابقة */}
                           {hasReplies && !showReplies && (
                             <button
                               type="button"
@@ -860,47 +871,50 @@ export default function FeedTab() {
                             </button>
                           )}
 
-                          {/* قائمة الردود المتداخلة */}
                           {hasReplies && showReplies && (
                             <div className="mt-2.5 mr-2 pr-3 border-r-2 border-slate-700 space-y-2.5">
-                              {cmt.replies.map((rep) => (
-                                <div key={rep.id} className="flex items-start gap-2">
-                                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-800 border border-white/10 text-[11px] font-black text-cyan-300 mt-0.5">
-                                    {rep.author.slice(0, 1)}
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="inline-block max-w-full rounded-2xl bg-[#2a2b2e] px-3 py-1.5">
-                                      <p className="text-[11px] font-extrabold text-white">
-                                        {rep.author}
-                                      </p>
-                                      <p className="mt-0.5 text-xs text-slate-100">{rep.text}</p>
+                              {cmt.replies.map((rep) => {
+                                const replyVerified = isVerifiedFounderId(rep.authorId);
+                                return (
+                                  <div key={rep.id} className="flex items-start gap-2">
+                                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-800 border border-white/10 text-[11px] font-black text-cyan-300 mt-0.5">
+                                      {rep.author.slice(0, 1)}
                                     </div>
-                                    <div className="mt-1 flex items-center gap-3 px-2 text-[10px] font-bold text-slate-400">
-                                      <span>{rep.createdAt}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleToggleReplyLike(activePost.id, cmt.id, rep.id)
-                                        }
-                                        className={
-                                          rep.likedByMe
-                                            ? 'text-[#4599FF]'
-                                            : 'text-slate-400 hover:text-slate-200'
-                                        }
-                                      >
-                                        أعجبني {rep.likesCount > 0 ? `(${rep.likesCount})` : ''}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleStartReply(cmt.id, rep.author)}
-                                        className="text-slate-400 hover:text-slate-200"
-                                      >
-                                        رد
-                                      </button>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="inline-block max-w-full rounded-2xl bg-[#2a2b2e] px-3 py-1.5">
+                                        <p className="flex items-center gap-1 text-[11px] font-extrabold text-white">
+                                          <span>{rep.author}</span>
+                                          {replyVerified && <VerifiedBlueBadge size={12} />}
+                                        </p>
+                                        <p className="mt-0.5 text-xs text-slate-100">{rep.text}</p>
+                                      </div>
+                                      <div className="mt-1 flex items-center gap-3 px-2 text-[10px] font-bold text-slate-400">
+                                        <span>{rep.createdAt}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            handleToggleReplyLike(activePost.id, cmt.id, rep.id)
+                                          }
+                                          className={
+                                            rep.likedByMe
+                                              ? 'text-[#4599FF]'
+                                              : 'text-slate-400 hover:text-slate-200'
+                                          }
+                                        >
+                                          أعجبني {rep.likesCount > 0 ? `(${rep.likesCount})` : ''}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleStartReply(cmt.id, rep.author)}
+                                          className="text-slate-400 hover:text-slate-200"
+                                        >
+                                          رد
+                                        </button>
+                                      </div>
                                     </div>
                                   </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           )}
                         </div>
@@ -911,7 +925,6 @@ export default function FeedTab() {
               )}
             </div>
 
-            {/* شريط التفاعلات السريعة + خانة «اكتب تعليقاً...» الثابتة بالأسفل */}
             <div className="border-t border-white/10 bg-[#242526] px-3 pt-2 pb-3 space-y-2">
               {replyingToComment && (
                 <div className="flex items-center justify-between rounded-xl bg-[#18191a] px-3 py-1.5 text-[11px] text-slate-300">
@@ -931,7 +944,6 @@ export default function FeedTab() {
                 </div>
               )}
 
-              {/* شريط الإيموجي السريع مثل فيسبوك */}
               <div className="flex items-center justify-between gap-1 overflow-x-auto px-1 py-0.5">
                 {QUICK_REACTIONS.map((emoji) => (
                   <button
