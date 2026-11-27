@@ -91,27 +91,78 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-function applySessionToProfile(s: Session | null) {
-  const meta = s?.user?.user_metadata;
-  if (!meta) return;
-  const fullName = typeof meta.full_name === 'string' ? meta.full_name.trim() : '';
-  const phoneNum = typeof meta.phone_number === 'string' ? meta.phone_number.trim() : '';
+function clearStoreForAccountSwitch() {
   const storeState = useAppStore.getState() as Record<string, any>;
-  const currentProfile = storeState.profile || {};
-  const patch: Record<string, string> = {};
+  if (typeof storeState.resetForAccountSwitch === 'function') {
+    storeState.resetForAccountSwitch();
+  } else if (typeof storeState.updateProfile === 'function') {
+    storeState.updateProfile({
+      name: '',
+      username: '',
+      phone: '',
+      avatar: '',
+    });
+  }
+}
 
-  if (fullName && (!currentProfile.name || currentProfile.name === 'أنت')) {
-    patch.name = fullName;
-    const cleanHandle = fullName.toLowerCase().replace(/[^a-z0-9_]/g, '');
-    if (cleanHandle && (!currentProfile.username || currentProfile.username === '@you')) {
-      patch.username = `@${cleanHandle}`;
+async function applySessionToProfile(s: Session | null) {
+  const storeState = useAppStore.getState() as Record<string, any>;
+  if (!s?.user) {
+    clearStoreForAccountSwitch();
+    return;
+  }
+
+  const uid = s.user.id;
+  const meta = s.user.user_metadata || {};
+  let fullName =
+    typeof meta.full_name === 'string'
+      ? meta.full_name.trim()
+      : typeof meta.name === 'string'
+        ? meta.name.trim()
+        : '';
+  let avatarUrl =
+    typeof meta.avatar_url === 'string'
+      ? meta.avatar_url.trim()
+      : typeof meta.avatar === 'string'
+        ? meta.avatar.trim()
+        : '';
+  const phoneNum = typeof meta.phone_number === 'string' ? meta.phone_number.trim() : '';
+
+  try {
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('full_name, avatar_url')
+      .eq('id', uid)
+      .maybeSingle();
+
+    if (prof?.full_name && typeof prof.full_name === 'string' && prof.full_name.trim()) {
+      fullName = prof.full_name.trim();
     }
+    if (prof?.avatar_url && typeof prof.avatar_url === 'string' && prof.avatar_url.trim()) {
+      avatarUrl = prof.avatar_url.trim();
+    }
+  } catch {
+    // تجاهل خطأ الجلب
   }
-  if (phoneNum && !currentProfile.phone) {
-    patch.phone = phoneNum;
-  }
-  if (Object.keys(patch).length > 0 && typeof storeState.updateProfile === 'function') {
-    storeState.updateProfile(patch);
+
+  if (typeof storeState.updateProfile === 'function') {
+    const patch: Record<string, string> = {};
+    if (fullName) {
+      patch.name = fullName;
+      const cleanHandle = fullName.toLowerCase().replace(/[^a-z0-9_]/g, '');
+      if (cleanHandle) {
+        patch.username = `@${cleanHandle}`;
+      }
+    }
+    if (avatarUrl) {
+      patch.avatar = avatarUrl;
+    }
+    if (phoneNum) {
+      patch.phone = phoneNum;
+    }
+    if (Object.keys(patch).length > 0) {
+      storeState.updateProfile(patch);
+    }
   }
 }
 
@@ -120,6 +171,10 @@ export default function App() {
   const [checking, setChecking] = useState(true);
   const [tab, setTab] = useState<Tab>('feed');
   const [composerOpen, setComposerOpen] = useState(false);
+  const [activeUserName, setActiveUserName] = useState<string>('');
+  const [activeUserAvatar, setActiveUserAvatar] = useState<string>('');
+
+  const activeUidRef = useRef<string | null>(null);
 
   const store = useAppStore() as Record<string, any>;
   const profile = store.profile || {};
@@ -127,8 +182,15 @@ export default function App() {
   const addPost = typeof store.addPost === 'function' ? store.addPost : null;
 
   const displayName =
-    profile.name && profile.name !== 'أنت' ? String(profile.name) : 'abobaker096605';
-  const rawHandle = profile.username || '@abobaker096605';
+    activeUserName ||
+    (typeof profile.name === 'string' && profile.name.trim() ? profile.name.trim() : '') ||
+    (session?.user?.email ? session.user.email.split('@')[0] : '') ||
+    'حساب وِصل';
+
+  const rawHandle =
+    typeof profile.username === 'string' && profile.username.trim()
+      ? profile.username.trim()
+      : displayName.toLowerCase().replace(/[^a-z0-9_]/g, '') || 'user';
   const displayHandle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
 
   const [postText, setPostText] = useState('');
@@ -142,23 +204,98 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const themeStripRef = useRef<HTMLDivElement | null>(null);
 
+  const syncSessionState = async (nextSession: Session | null) => {
+    const nextUid = nextSession?.user?.id ?? null;
+
+    if (!nextSession || !nextUid) {
+      activeUidRef.current = null;
+      setSession(null);
+      setActiveUserName('');
+      setActiveUserAvatar('');
+      clearStoreForAccountSwitch();
+      return;
+    }
+
+    if (activeUidRef.current && activeUidRef.current !== nextUid) {
+      setActiveUserName('');
+      setActiveUserAvatar('');
+      clearStoreForAccountSwitch();
+    }
+
+    activeUidRef.current = nextUid;
+    setSession(nextSession);
+
+    const meta = nextSession.user.user_metadata || {};
+    let resolvedName =
+      typeof meta.full_name === 'string'
+        ? meta.full_name.trim()
+        : typeof meta.name === 'string'
+          ? meta.name.trim()
+          : '';
+    let resolvedAvatar =
+      typeof meta.avatar_url === 'string'
+        ? meta.avatar_url.trim()
+        : typeof meta.avatar === 'string'
+          ? meta.avatar.trim()
+          : '';
+
+    try {
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('full_name, avatar_url')
+        .eq('id', nextUid)
+        .maybeSingle();
+
+      if (prof?.full_name && typeof prof.full_name === 'string' && prof.full_name.trim()) {
+        resolvedName = prof.full_name.trim();
+      }
+      if (prof?.avatar_url && typeof prof.avatar_url === 'string' && prof.avatar_url.trim()) {
+        resolvedAvatar = prof.avatar_url.trim();
+      }
+    } catch {
+      // تجاهل
+    }
+
+    if (!resolvedName && nextSession.user.email) {
+      resolvedName = nextSession.user.email.split('@')[0];
+    }
+
+    setActiveUserName(resolvedName);
+    setActiveUserAvatar(resolvedAvatar);
+    await applySessionToProfile(nextSession);
+  };
+
   useEffect(() => {
-    void supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      applySessionToProfile(data.session);
-      setChecking(false);
+    let active = true;
+
+    void supabase.auth.getSession().then(async ({ data }) => {
+      if (!active) return;
+      await syncSessionState(data.session);
+      if (active) setChecking(false);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
-      applySessionToProfile(s);
-      setChecking(false);
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!active) return;
+      void syncSessionState(nextSession).finally(() => {
+        if (active) setChecking(false);
+      });
     });
 
     return () => {
+      active = false;
       sub.subscription.unsubscribe();
     };
   }, []);
+
+  const handleLogoutEverywhere = async () => {
+    await syncSessionState(null);
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // تجاهل
+    }
+    setTab('feed');
+  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
@@ -175,7 +312,9 @@ export default function App() {
   const uploadToWaslMedia = async (file: File, fallbackUrl: string): Promise<string> => {
     try {
       const { data: authData } = await supabase.auth.getUser();
-      const uid = authData?.user?.id || session?.user?.id || 'guest';
+      const uid = authData?.user?.id || session?.user?.id;
+      if (!uid) return fallbackUrl;
+
       const ext = (file.name.split('.').pop() || 'jpg').replace(/[^a-zA-Z0-9]/g, '');
       const filePath = `posts/${uid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext || 'jpg'}`;
 
@@ -288,6 +427,7 @@ export default function App() {
   const canSubmit = Boolean(buildFinalContent() || imageUrl.trim()) && !submitting;
   const activeThemeObj = BG_THEMES.find((t) => t.id === selectedTheme) || BG_THEMES[0];
   const isLightTheme = selectedTheme === 'light';
+  const effectiveAvatar = activeUserAvatar || profile.avatar || undefined;
 
   const modalOptions = [
     {
@@ -384,7 +524,9 @@ export default function App() {
       <WaslHeaderBar
         activeTab={tab as WaslTabKey}
         onSelectTab={(t) => setTab(t as Tab)}
-        onOpenCreatePost={() => setComposerOpen(true)}
+        currentUserName={displayName}
+        userAvatar={effectiveAvatar}
+        onLogout={() => void handleLogoutEverywhere()}
         onSelectFriend={(_friend: FriendItem) => setTab('chats')}
       />
 
@@ -428,11 +570,17 @@ export default function App() {
 
               <div className="px-4 pt-3.5 pb-2">
                 <div className="flex items-center gap-3">
-                  <img
-                    src={profile.avatar}
-                    alt=""
-                    className="h-11 w-11 shrink-0 rounded-full border border-white/15 object-cover"
-                  />
+                  {effectiveAvatar ? (
+                    <img
+                      src={effectiveAvatar}
+                      alt=""
+                      className="h-11 w-11 shrink-0 rounded-full border border-white/15 object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-800 text-sm font-bold text-white border border-white/15">
+                      {displayName.slice(0, 1)}
+                    </div>
+                  )}
                   <div>
                     <p className="text-sm font-bold text-white leading-tight">{displayName}</p>
                     <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-white/15 bg-[#2a2b30] px-2 py-0.5 text-[11px] font-semibold text-slate-200">
