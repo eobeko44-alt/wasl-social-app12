@@ -25,7 +25,7 @@ let memoryPassword = '';
 let memoryIdentifier = '';
 
 function isRealEmail(val: string): boolean {
-  const clean = val.trim();
+  const clean = val.trim().toLowerCase();
   return Boolean(clean && clean.includes('@') && !clean.endsWith('@wasl-phone.local'));
 }
 
@@ -55,10 +55,11 @@ function writeLastCredentials(identifier: string, secret: string) {
   }
 }
 
-function buildUsername(name: string, digits: string): string {
+function buildUsername(name: string, digits: string, uid?: string): string {
   const latin = name.toLowerCase().replace(/[^a-z0-9_]/g, '');
   if (latin.length >= 2) return `@${latin}`;
   if (digits.length >= 4) return `@u_${digits.slice(-4)}`;
+  if (uid) return `@u_${uid.slice(0, 6)}`;
   return '@wasl_user';
 }
 
@@ -96,7 +97,7 @@ function resolveAccountLink(rawId: string, rawMode?: AuthMode): {
   if (!clean) return null;
 
   if (rawMode === 'email') {
-    return isRealEmail(clean) ? { mode: 'email', identifier: clean } : null;
+    return isRealEmail(clean) ? { mode: 'email', identifier: clean.toLowerCase() } : null;
   }
 
   if (rawMode === 'phone') {
@@ -104,7 +105,7 @@ function resolveAccountLink(rawId: string, rawMode?: AuthMode): {
   }
 
   if (isRealEmail(clean)) {
-    return { mode: 'email', identifier: clean };
+    return { mode: 'email', identifier: clean.toLowerCase() };
   }
 
   if (isValidPhone(clean)) {
@@ -159,14 +160,17 @@ export default function AuthGate() {
     });
   };
 
-  const captureSessionAccount = (user: {
-    id?: string;
-    email?: string | null;
-    user_metadata?: Record<string, unknown>;
-  } | null) => {
-    if (!user) return;
+  const syncLoggedInUserProfile = async (
+    user: {
+      id?: string;
+      email?: string | null;
+      user_metadata?: Record<string, unknown>;
+    } | null,
+    explicitPassword?: string
+  ) => {
+    if (!user?.id) return;
     const meta = user.user_metadata || {};
-    const rawEmail = String(user.email || '').trim();
+    const rawEmail = String(user.email || '').trim().toLowerCase();
     const isPhoneLocal = rawEmail.endsWith('@wasl-phone.local');
     const phoneDigits = isPhoneLocal ? rawEmail.replace('@wasl-phone.local', '') : '';
     const metaPhone = meta.phone_number ? String(meta.phone_number).trim() : '';
@@ -174,36 +178,78 @@ export default function AuthGate() {
     const link = isRealEmail(rawEmail)
       ? { mode: 'email' as AuthMode, identifier: rawEmail }
       : isValidPhone(metaPhone)
-      ? { mode: 'phone' as AuthMode, identifier: metaPhone }
-      : isValidPhone(phoneDigits)
-      ? { mode: 'phone' as AuthMode, identifier: phoneDigits }
-      : null;
+        ? { mode: 'phone' as AuthMode, identifier: metaPhone }
+        : isValidPhone(phoneDigits)
+          ? { mode: 'phone' as AuthMode, identifier: phoneDigits }
+          : null;
 
-    if (!link) return;
-
-    const resolvedName = meta.full_name
+    let resolvedName = meta.full_name
       ? String(meta.full_name).trim()
-      : link.mode === 'email'
-      ? rawEmail.split('@')[0]
-      : link.identifier || 'مستخدم وِصل';
+      : meta.name
+        ? String(meta.name).trim()
+        : '';
 
-    const handle = buildUsername(resolvedName, link.identifier.replace(/\D/g, ''));
-    const existing = loadSavedAccounts().find(
-      (item) =>
-        item.id === user.id ||
-        item.identifier.trim().toLowerCase() === link.identifier.trim().toLowerCase()
+    let resolvedAvatar = meta.avatar_url
+      ? String(meta.avatar_url).trim()
+      : meta.avatar
+        ? String(meta.avatar).trim()
+        : '';
+
+    try {
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('full_name, avatar_url')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (prof?.full_name && String(prof.full_name).trim()) {
+        resolvedName = String(prof.full_name).trim();
+      }
+      if (prof?.avatar_url && String(prof.avatar_url).trim()) {
+        resolvedAvatar = String(prof.avatar_url).trim();
+      }
+    } catch {
+      // تجاهل
+    }
+
+    if (!resolvedName) {
+      resolvedName =
+        link?.mode === 'email'
+          ? rawEmail.split('@')[0]
+          : link?.identifier || `مستخدم ${user.id.slice(0, 6)}`;
+    }
+
+    const handle = buildUsername(
+      resolvedName,
+      link?.identifier.replace(/\D/g, '') || '',
+      user.id
     );
-    if (!existing) return;
 
-    saveAccountToList({
-      id: user.id || existing.id || link.identifier,
+    updateProfile({
+      id: user.id,
       name: resolvedName,
-      identifier: link.identifier,
-      mode: link.mode,
       username: handle,
-      avatar: meta.avatar_url ? String(meta.avatar_url) : existing.avatar,
-      password: existing.password,
+      email: isRealEmail(rawEmail) ? rawEmail : '',
+      phone: link?.mode === 'phone' ? link.identifier : '',
+      avatar: resolvedAvatar || '',
     });
+
+    if (link) {
+      const existing = loadSavedAccounts().find(
+        (item) =>
+          item.id === user.id ||
+          item.identifier.trim().toLowerCase() === link.identifier.trim().toLowerCase()
+      );
+      saveAccountToList({
+        id: user.id,
+        name: resolvedName,
+        identifier: link.identifier,
+        mode: link.mode,
+        username: handle,
+        avatar: resolvedAvatar || existing?.avatar,
+        password: explicitPassword || existing?.password,
+      });
+    }
   };
 
   useEffect(() => {
@@ -213,15 +259,15 @@ export default function AuthGate() {
       setShowLoginForm(false);
     }
 
-    supabase.auth.getSession().then(({ data }) => {
+    void supabase.auth.getSession().then(({ data }) => {
       if (data.session?.user) {
-        captureSessionAccount(data.session.user);
+        void syncLoggedInUserProfile(data.session.user);
       }
     });
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        captureSessionAccount(session.user);
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        void syncLoggedInUserProfile(session.user);
       }
     });
 
@@ -302,12 +348,13 @@ export default function AuthGate() {
           ? link.identifier
           : toPhoneAuthEmail(link.identifier.replace(/\D/g, ''));
 
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: authEmail,
         password: effectivePassword,
       });
       setLoading(false);
-      if (!error) {
+      if (!error && data.user) {
+        await syncLoggedInUserProfile(data.user, effectivePassword);
         return;
       }
     }
@@ -330,7 +377,7 @@ export default function AuthGate() {
       return;
     }
 
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
     if (!isRealEmail(cleanEmail)) {
       setErr('اكتب بريدك الإلكتروني أولاً لإرسال رابط استعادة كلمة السر.');
       return;
@@ -376,7 +423,7 @@ export default function AuthGate() {
     setMsg(null);
 
     const cleanPhone = phone.trim();
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
     const digits = cleanPhone.replace(/\D/g, '');
 
     if (mode === 'phone' && !isValidPhone(cleanPhone)) {
@@ -421,29 +468,33 @@ export default function AuthGate() {
       if (error) {
         setErr(error.message);
       } else {
-        updateProfile({
-          name: cleanName,
-          username: handle,
-          ...(mode === 'phone' ? { phone: cleanPhone } : {}),
-        });
-        setMsg(data.session ? 'تم إنشاء الحساب وتسجيل الدخول.' : 'تم إنشاء الحساب بنجاح.');
+        if (data.user?.id) {
+          try {
+            await supabase.from('profiles').upsert(
+              {
+                id: data.user.id,
+                full_name: cleanName,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: 'id' }
+            );
+          } catch {
+            // تجاهل
+          }
+          await syncLoggedInUserProfile(data.user, password);
+        }
+        setMsg(
+          data.session
+            ? 'تم إنشاء الحساب وتسجيل الدخول.'
+            : 'تم إنشاء الحساب؛ يرجى تأكيد البريد الإلكتروني إذا كان التفعيل مفعلاً ثم تسجيل الدخول.'
+        );
       }
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email: target, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email: target, password });
       if (error) {
-        setErr('البيانات غير صحيحة.');
-      } else {
-        const resolvedName =
-          cleanName || (mode === 'phone' ? cleanPhone : cleanEmail.split('@')[0]) || 'مستخدم وِصل';
-        const resolvedHandle = buildUsername(resolvedName, digits);
-        const patch: { name?: string; phone?: string; username?: string } = {
-          name: resolvedName,
-          username: resolvedHandle,
-        };
-        if (mode === 'phone') {
-          patch.phone = cleanPhone;
-        }
-        updateProfile(patch);
+        setErr('البيانات غير صحيحة أو الحساب غير موجود.');
+      } else if (data.user) {
+        await syncLoggedInUserProfile(data.user, password);
       }
     }
     setLoading(false);
@@ -476,7 +527,7 @@ export default function AuthGate() {
                 <button
                   type="button"
                   disabled={loading}
-                  onClick={() => handleSelectSavedAccount(acc)}
+                  onClick={() => void handleSelectSavedAccount(acc)}
                   className="flex flex-1 items-center gap-3 text-right min-w-0 disabled:opacity-60"
                 >
                   {acc.avatar ? (
@@ -518,6 +569,7 @@ export default function AuthGate() {
               onClick={() => {
                 setErr(null);
                 setMsg(null);
+                setName('');
                 setPhone('');
                 setEmail('');
                 setPassword('');
@@ -532,6 +584,12 @@ export default function AuthGate() {
               onClick={() => {
                 setErr(null);
                 setMsg(null);
+                setName('');
+                setBirthDate('');
+                setGender('');
+                setPhone('');
+                setEmail('');
+                setPassword('');
                 setStep(1);
                 setIsSignUp(true);
               }}
@@ -579,7 +637,7 @@ export default function AuthGate() {
         )}
 
         {(isSignUp || showLoginForm) && (
-          <form onSubmit={onSubmit} className="space-y-3">
+          <form onSubmit={(e) => void onSubmit(e)} className="space-y-3">
             {isSignUp && step === 1 && (
               <div className="space-y-2">
                 <label className="block text-xs font-bold text-slate-300">ما اسمك؟</label>
@@ -718,7 +776,7 @@ export default function AuthGate() {
                     <button
                       type="button"
                       disabled={resetLoading}
-                      onClick={handleForgotPassword}
+                      onClick={() => void handleForgotPassword()}
                       className="w-full rounded-lg border border-purple-500/40 bg-purple-600/20 py-2 text-xs font-bold text-purple-200 hover:bg-purple-600/30 disabled:opacity-50"
                     >
                       {resetLoading ? 'جاري الإرسال...' : 'إرسال رابط استعادة كلمة السر'}
@@ -769,6 +827,12 @@ export default function AuthGate() {
               setErr(null);
               setMsg(null);
               setForgotOpen(false);
+              setName('');
+              setBirthDate('');
+              setGender('');
+              setPhone('');
+              setEmail('');
+              setPassword('');
               setStep(1);
               setIsSignUp(!isSignUp);
             }}
