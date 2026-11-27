@@ -166,21 +166,6 @@ function loadLocalSnapshot(uid: string): Partial<PersistedProfileData> {
 
 async function saveAllPersistence(uid: string, data: PersistedProfileData): Promise<void> {
   if (!uid) return;
-  try {
-    if (data.avatarImage) {
-      localStorage.setItem(scopedKey(uid, 'avatar'), data.avatarImage);
-    } else {
-      localStorage.removeItem(scopedKey(uid, 'avatar'));
-    }
-    if (data.coverImage) {
-      localStorage.setItem(scopedKey(uid, 'cover'), data.coverImage);
-    } else {
-      localStorage.removeItem(scopedKey(uid, 'cover'));
-    }
-  } catch {
-    // تجاهل
-  }
-
   const { posts, avatarImage, coverImage, ...metaOnly } = data;
   try {
     localStorage.setItem(scopedKey(uid, 'meta'), JSON.stringify(metaOnly));
@@ -188,7 +173,11 @@ async function saveAllPersistence(uid: string, data: PersistedProfileData): Prom
     // تجاهل
   }
   try {
-    localStorage.setItem(scopedKey(uid, 'posts'), JSON.stringify(posts));
+    const lightPosts = posts.slice(0, 25).map(({ image, ...rest }) => ({
+      ...rest,
+      image: image && image.startsWith('data:') ? undefined : image,
+    }));
+    localStorage.setItem(scopedKey(uid, 'posts'), JSON.stringify(lightPosts));
   } catch {
     // تجاهل
   }
@@ -221,7 +210,6 @@ export default function ProfileTab() {
   const [avatarImage, setAvatarImage] = useState<string>('');
   const [isPublicAccount, setIsPublicAccount] = useState<boolean>(true);
 
-  // تعديل التفاصيل الشخصية
   const [editingDetails, setEditingDetails] = useState(false);
   const [bio, setBio] = useState<string>(DEFAULT_BIO);
   const [city, setCity] = useState<string>(DEFAULT_CITY);
@@ -230,7 +218,6 @@ export default function ProfileTab() {
   const [education, setEducation] = useState<string>(DEFAULT_EDUCATION);
   const [interestsText, setInterestsText] = useState<string>(DEFAULT_INTERESTS);
 
-  // أبرز القصص
   const [highlights, setHighlights] = useState<Array<{ id: string; title: string; image?: string }>>(
     []
   );
@@ -265,7 +252,11 @@ export default function ProfileTab() {
   useEffect(() => {
     let active = true;
 
-    async function loadForSessionUser(uid: string | null, email?: string | null, meta?: Record<string, any>) {
+    async function loadForSessionUser(
+      uid: string | null,
+      email?: string | null,
+      meta?: Record<string, any>
+    ) {
       if (!active) return;
 
       if (!uid) {
@@ -293,50 +284,52 @@ export default function ProfileTab() {
           : '';
 
       const localSnap = loadLocalSnapshot(uid);
-      const dbData = await loadFromIndexedDB(uid);
-      if (!active) return;
-
       const initialName =
         localSnap.name ||
-        dbData?.name ||
         metaName ||
         (email ? email.split('@')[0] : '') ||
         (typeof profile.name === 'string' && profile.name.trim() ? profile.name.trim() : '') ||
         `مستخدم ${uid.slice(0, 6)}`;
 
-      const mergedAvatar =
-        dbData?.avatarImage || localSnap.avatarImage || metaAvatar || '';
-      const mergedCover =
-        dbData?.coverImage || localSnap.coverImage || '';
-      const mergedPosts =
-        Array.isArray(dbData?.posts) && dbData.posts.length > 0
-          ? dbData.posts
-          : Array.isArray(localSnap.posts)
-            ? localSnap.posts
-            : [];
-
       setDisplayName(initialName);
-      setAvatarImage(mergedAvatar);
-      setCoverImage(mergedCover);
-      setBio(String(dbData?.bio ?? localSnap.bio ?? DEFAULT_BIO));
-      setCity(String(dbData?.city ?? localSnap.city ?? DEFAULT_CITY));
-      setHometown(String(dbData?.hometown ?? localSnap.hometown ?? DEFAULT_HOMETOWN));
-      setBirthday(String(dbData?.birthday ?? localSnap.birthday ?? DEFAULT_BIRTHDAY));
-      setEducation(String(dbData?.education ?? localSnap.education ?? DEFAULT_EDUCATION));
-      setInterestsText(String(dbData?.interestsText ?? localSnap.interestsText ?? DEFAULT_INTERESTS));
-      setIsPublicAccount(
-        typeof (dbData?.isPublicAccount ?? localSnap.isPublicAccount) === 'boolean'
-          ? Boolean(dbData?.isPublicAccount ?? localSnap.isPublicAccount)
-          : true
-      );
-      setHighlights(
-        Array.isArray(dbData?.highlights) && dbData.highlights.length > 0
-          ? dbData.highlights
-          : Array.isArray(localSnap.highlights)
-            ? localSnap.highlights
-            : []
-      );
-      setActivityPosts(mergedPosts);
+      if (localSnap.avatarImage || metaAvatar) {
+        setAvatarImage(localSnap.avatarImage || metaAvatar);
+      }
+      if (localSnap.coverImage) {
+        setCoverImage(localSnap.coverImage);
+      }
+      if (localSnap.bio) setBio(String(localSnap.bio));
+      if (localSnap.city) setCity(String(localSnap.city));
+      if (localSnap.hometown) setHometown(String(localSnap.hometown));
+      if (localSnap.birthday) setBirthday(String(localSnap.birthday));
+      if (localSnap.education) setEducation(String(localSnap.education));
+      if (localSnap.interestsText) setInterestsText(String(localSnap.interestsText));
+      if (Array.isArray(localSnap.highlights)) setHighlights(localSnap.highlights);
+      if (Array.isArray(localSnap.posts)) setActivityPosts(localSnap.posts);
+
+      const dbData = await loadFromIndexedDB(uid);
+      if (!active) return;
+
+      if (dbData) {
+        if (dbData.name) setDisplayName(dbData.name);
+        if (dbData.avatarImage) setAvatarImage(dbData.avatarImage);
+        if (dbData.coverImage) setCoverImage(dbData.coverImage);
+        if (dbData.bio) setBio(String(dbData.bio));
+        if (dbData.city) setCity(String(dbData.city));
+        if (dbData.hometown) setHometown(String(dbData.hometown));
+        if (dbData.birthday) setBirthday(String(dbData.birthday));
+        if (dbData.education) setEducation(String(dbData.education));
+        if (dbData.interestsText) setInterestsText(String(dbData.interestsText));
+        if (typeof dbData.isPublicAccount === 'boolean') {
+          setIsPublicAccount(dbData.isPublicAccount);
+        }
+        if (Array.isArray(dbData.highlights) && dbData.highlights.length > 0) {
+          setHighlights(dbData.highlights);
+        }
+        if (Array.isArray(dbData.posts) && dbData.posts.length > 0) {
+          setActivityPosts(dbData.posts);
+        }
+      }
 
       try {
         const { data: remoteProfile } = await supabase
@@ -366,7 +359,8 @@ export default function ProfileTab() {
           .from('posts')
           .select('*')
           .eq('user_id', uid)
-          .order('created_at', { ascending: false });
+          .order('created_at', { ascending: false })
+          .limit(30);
 
         if (!active) return;
 
@@ -444,20 +438,24 @@ export default function ProfileTab() {
 
   useEffect(() => {
     if (!currentUid || hydratedUid !== currentUid) return;
-    void saveAllPersistence(currentUid, {
-      name: displayName,
-      coverImage,
-      avatarImage,
-      bio,
-      city,
-      hometown,
-      birthday,
-      education,
-      interestsText,
-      isPublicAccount,
-      highlights,
-      posts: activityPosts,
-    });
+    const timer = window.setTimeout(() => {
+      void saveAllPersistence(currentUid, {
+        name: displayName,
+        coverImage,
+        avatarImage,
+        bio,
+        city,
+        hometown,
+        birthday,
+        education,
+        interestsText,
+        isPublicAccount,
+        highlights,
+        posts: activityPosts,
+      });
+    }, 350);
+
+    return () => window.clearTimeout(timer);
   }, [
     currentUid,
     hydratedUid,
@@ -485,8 +483,8 @@ export default function ProfileTab() {
     education?: string;
   }): Promise<void> {
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData?.user?.id || currentUid;
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id || currentUid;
       if (!userId) return;
 
       await supabase.from('profiles').upsert(
@@ -511,8 +509,8 @@ export default function ProfileTab() {
 
   async function uploadToWaslMedia(file: File, fallbackDataUrl: string): Promise<string> {
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      const uid = userData?.user?.id || currentUid;
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData?.session?.user?.id || currentUid;
       if (!uid) return fallbackDataUrl;
       const safeExt = (file.name.split('.').pop() || 'jpg').replace(/[^a-zA-Z0-9]/g, '');
       const filePath = `${uid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${safeExt || 'jpg'}`;
@@ -534,8 +532,8 @@ export default function ProfileTab() {
 
   async function persistPostToSupabase(item: ActivityPostItem): Promise<void> {
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData?.user?.id ?? (currentUid || null);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id ?? (currentUid || null);
       if (!userId) return;
 
       const { data: inserted, error } = await supabase
@@ -569,26 +567,21 @@ export default function ProfileTab() {
 
   const handlePickImage = async (
     e: React.ChangeEvent<HTMLInputElement>,
-    onLoaded: (imageUrl: string, fileName: string) => Promise<void>
+    onLoaded: (imageUrl: string, fileName: string, file: File) => void
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setStatusMessage('جاري حفظ الصورة...');
     const rawDataUrl = await readRawFileAsDataUrl(file);
-    if (!rawDataUrl) {
-      setStatusMessage('');
-      return;
-    }
-    const finalUrl = await uploadToWaslMedia(file, rawDataUrl);
-    await onLoaded(finalUrl, file.name);
-    setStatusMessage('تم حفظ الصورة بنجاح');
+    if (!rawDataUrl) return;
+    onLoaded(rawDataUrl, file.name, file);
+    setStatusMessage('تم تحديث الصورة');
     setTimeout(() => {
-      setStatusMessage((prev) => (prev === 'تم حفظ الصورة بنجاح' ? '' : prev));
-    }, 2500);
+      setStatusMessage((prev) => (prev === 'تم تحديث الصورة' ? '' : prev));
+    }, 2000);
     e.target.value = '';
   };
 
-  const pushActivityPost = async (item: ActivityPostItem): Promise<void> => {
+  const pushActivityPost = (item: ActivityPostItem): void => {
     const fullItem: ActivityPostItem = {
       ...item,
       liked: false,
@@ -596,27 +589,9 @@ export default function ProfileTab() {
       sharesCount: 0,
       comments: [],
     };
-    const nextPosts = [fullItem, ...activityPosts];
-    setActivityPosts(nextPosts);
+    setActivityPosts((prev) => [fullItem, ...prev]);
 
-    if (currentUid) {
-      await saveAllPersistence(currentUid, {
-        name: displayName,
-        coverImage,
-        avatarImage,
-        bio,
-        city,
-        hometown,
-        birthday,
-        education,
-        interestsText,
-        isPublicAccount,
-        highlights,
-        posts: nextPosts,
-      });
-    }
-
-    await persistPostToSupabase(fullItem);
+    void persistPostToSupabase(fullItem);
 
     if (typeof store.addPost === 'function') {
       store.addPost({
@@ -630,21 +605,14 @@ export default function ProfileTab() {
     }
   };
 
-  const handleCoverChange = async (imageUrl: string): Promise<void> => {
+  const handleCoverChange = (imageUrl: string, file?: File): void => {
     setCoverImage(imageUrl);
-    if (currentUid) {
-      try {
-        localStorage.setItem(scopedKey(currentUid, 'cover'), imageUrl);
-      } catch {
-        // تجاهل
-      }
-    }
     if (typeof store.updateProfile === 'function') {
       store.updateProfile({ coverImage: imageUrl, cover: imageUrl });
     }
-    await syncProfileToSupabase({ cover_url: imageUrl });
-    await pushActivityPost({
-      id: `cover-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    const postId = `cover-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    pushActivityPost({
+      id: postId,
       authorName: displayName,
       authorAvatar: avatarImage || undefined,
       headline: `قام ${displayName} بتحديث صورة الغلاف`,
@@ -652,23 +620,27 @@ export default function ProfileTab() {
       createdAt: 'الآن',
       kind: 'cover',
     });
+
+    void (async () => {
+      const finalUrl = file ? await uploadToWaslMedia(file, imageUrl) : imageUrl;
+      if (finalUrl !== imageUrl) {
+        setCoverImage(finalUrl);
+        setActivityPosts((prev) =>
+          prev.map((p) => (p.id === postId ? { ...p, image: finalUrl } : p))
+        );
+      }
+      await syncProfileToSupabase({ cover_url: finalUrl });
+    })();
   };
 
-  const handleAvatarChange = async (imageUrl: string): Promise<void> => {
+  const handleAvatarChange = (imageUrl: string, file?: File): void => {
     setAvatarImage(imageUrl);
-    if (currentUid) {
-      try {
-        localStorage.setItem(scopedKey(currentUid, 'avatar'), imageUrl);
-      } catch {
-        // تجاهل
-      }
-    }
     if (typeof store.updateProfile === 'function') {
       store.updateProfile({ avatar: imageUrl });
     }
-    await syncProfileToSupabase({ avatar_url: imageUrl });
-    await pushActivityPost({
-      id: `avatar-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    const postId = `avatar-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    pushActivityPost({
+      id: postId,
       authorName: displayName,
       authorAvatar: imageUrl,
       headline: `قام ${displayName} بتحديث صورة ملفه الشخصي`,
@@ -676,39 +648,34 @@ export default function ProfileTab() {
       createdAt: 'الآن',
       kind: 'avatar',
     });
+
+    void (async () => {
+      const finalUrl = file ? await uploadToWaslMedia(file, imageUrl) : imageUrl;
+      if (finalUrl !== imageUrl) {
+        setAvatarImage(finalUrl);
+        setActivityPosts((prev) =>
+          prev.map((p) => (p.id === postId ? { ...p, image: finalUrl, authorAvatar: finalUrl } : p))
+        );
+      }
+      await syncProfileToSupabase({ avatar_url: finalUrl });
+    })();
   };
 
-  const handleAddHighlight = async (imageUrl: string, fileName: string): Promise<void> => {
+  const handleAddHighlight = (imageUrl: string, fileName: string): void => {
     const cleanTitle = fileName.replace(/\.[^/.]+$/, '').slice(0, 18) || 'قصة بارزة';
-    const nextHighlights = [
-      ...highlights,
+    setHighlights((prev) => [
+      ...prev,
       {
         id: `hl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         title: cleanTitle,
         image: imageUrl,
       },
-    ];
-    setHighlights(nextHighlights);
-    if (currentUid) {
-      await saveAllPersistence(currentUid, {
-        name: displayName,
-        coverImage,
-        avatarImage,
-        bio,
-        city,
-        hometown,
-        birthday,
-        education,
-        interestsText,
-        isPublicAccount,
-        highlights: nextHighlights,
-        posts: activityPosts,
-      });
-    }
+    ]);
   };
 
-  const handleSaveDetails = async (e: React.FormEvent) => {
+  const handleSaveDetails = (e: React.FormEvent) => {
     e.preventDefault();
+    setEditingDetails(false);
     if (typeof store.updateProfile === 'function') {
       store.updateProfile({
         bio: bio.trim(),
@@ -720,14 +687,13 @@ export default function ProfileTab() {
         isPublic: isPublicAccount,
       });
     }
-    await syncProfileToSupabase({
+    void syncProfileToSupabase({
       bio: bio.trim(),
       city: city.trim(),
       hometown: hometown.trim(),
       birthday: birthday.trim(),
       education: education.trim(),
     });
-    setEditingDetails(false);
   };
 
   const handleToggleLike = (postId: string) => {
@@ -797,34 +763,12 @@ export default function ProfileTab() {
     }
   };
 
-  const handleDeletePost = async (postId: string) => {
+  const handleDeletePost = (postId: string) => {
     const target = activityPosts.find((p) => p.id === postId);
-    const updated = activityPosts.filter((p) => p.id !== postId);
-    setActivityPosts(updated);
-
-    if (currentUid) {
-      await saveAllPersistence(currentUid, {
-        name: displayName,
-        coverImage,
-        avatarImage,
-        bio,
-        city,
-        hometown,
-        birthday,
-        education,
-        interestsText,
-        isPublicAccount,
-        highlights,
-        posts: updated,
-      });
-    }
+    setActivityPosts((prev) => prev.filter((p) => p.id !== postId));
 
     if (target?.dbId) {
-      try {
-        await supabase.from('posts').delete().eq('id', target.dbId);
-      } catch {
-        // تجاهل
-      }
+      void supabase.from('posts').delete().eq('id', target.dbId);
     }
   };
 
@@ -834,14 +778,18 @@ export default function ProfileTab() {
         ref={coverInputRef}
         type="file"
         accept="image/*"
-        onChange={(e) => void handlePickImage(e, (url) => handleCoverChange(url))}
+        onChange={(e) =>
+          void handlePickImage(e, (url, _name, file) => handleCoverChange(url, file))
+        }
         className="hidden"
       />
       <input
         ref={avatarInputRef}
         type="file"
         accept="image/*"
-        onChange={(e) => void handlePickImage(e, (url) => handleAvatarChange(url))}
+        onChange={(e) =>
+          void handlePickImage(e, (url, _name, file) => handleAvatarChange(url, file))
+        }
         className="hidden"
       />
       <input
@@ -865,6 +813,8 @@ export default function ProfileTab() {
             <img
               src={coverImage}
               alt="غلاف الملف الشخصي"
+              loading="lazy"
+              decoding="async"
               className="h-full w-full object-cover"
             />
           )}
@@ -888,6 +838,8 @@ export default function ProfileTab() {
                   <img
                     src={avatarImage}
                     alt={displayName}
+                    loading="lazy"
+                    decoding="async"
                     className="h-full w-full object-cover"
                   />
                 ) : (
@@ -1172,6 +1124,8 @@ export default function ProfileTab() {
                   <img
                     src={hl.image}
                     alt={hl.title}
+                    loading="lazy"
+                    decoding="async"
                     className="absolute inset-0 h-full w-full object-cover"
                   />
                 )}
@@ -1211,6 +1165,8 @@ export default function ProfileTab() {
                       <img
                         src={String(friend.avatar)}
                         alt={fName}
+                        loading="lazy"
+                        decoding="async"
                         className="mx-auto h-16 w-16 rounded-xl object-cover"
                       />
                     ) : (
@@ -1244,6 +1200,8 @@ export default function ProfileTab() {
                   key={`${p.id}-${idx}`}
                   src={p.image}
                   alt={`صورة ${idx + 1}`}
+                  loading="lazy"
+                  decoding="async"
                   className="h-28 w-full rounded-xl object-cover border border-slate-800"
                 />
               ))}
@@ -1277,6 +1235,8 @@ export default function ProfileTab() {
                         <img
                           src={avatarImage}
                           alt={displayName}
+                          loading="lazy"
+                          decoding="async"
                           className="h-9 w-9 shrink-0 rounded-full object-cover border border-cyan-500/30"
                         />
                       ) : (
@@ -1292,7 +1252,7 @@ export default function ProfileTab() {
 
                     <button
                       type="button"
-                      onClick={() => void handleDeletePost(post.id)}
+                      onClick={() => handleDeletePost(post.id)}
                       title="حذف المنشور"
                       aria-label="حذف المنشور"
                       className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-950/40 hover:text-rose-400 transition"
@@ -1311,6 +1271,8 @@ export default function ProfileTab() {
                     <img
                       src={post.image}
                       alt={post.headline}
+                      loading="lazy"
+                      decoding="async"
                       className={`w-full rounded-xl object-cover border border-slate-800 ${
                         post.kind === 'avatar'
                           ? 'mx-auto h-64 w-64 rounded-full'
