@@ -65,9 +65,9 @@ export default function ChatList({
                   : 'hover:bg-slate-800/60'
               }`}
             >
-              <Avatar src={conv.user.avatar} online={conv.user.isOnline} />
+              <Avatar src={conv.user?.avatar} online={conv.user?.isOnline} />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold text-white">{conv.user.name}</p>
+                <p className="truncate text-sm font-bold text-white">{conv.user?.name || 'مستخدم وِصل'}</p>
                 <p
                   className={`truncate text-xs ${
                     last?.senderId === 'me' ? 'text-slate-400' : 'text-slate-500'
