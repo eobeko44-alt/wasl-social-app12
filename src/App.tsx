@@ -23,7 +23,7 @@ import ChatsTab from '@/components/chats/ChatsTab';
 import { FriendsTab } from '@/components/FriendsTab';
 import ProfileTab from '@/components/profile/ProfileTab';
 
-type Tab = 'feed' | 'chats' | 'contacts' | 'profile';
+type Tab = 'feed' | 'chats' | 'contacts' | 'notifications' | 'profile';
 
 const MEDIA_BUCKET = 'wasl-media';
 
