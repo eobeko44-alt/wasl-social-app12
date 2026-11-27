@@ -313,6 +313,28 @@ export function WaslHeaderBar({
   const [searchingAccounts, setSearchingAccounts] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  // شريط التحميل العلوي الخفيف عند التنقل
+  const [topBarLoading, setTopBarLoading] = useState(false);
+  const topBarTimerRef = useRef<number | null>(null);
+
+  const triggerTopProgress = () => {
+    setTopBarLoading(true);
+    if (topBarTimerRef.current) {
+      window.clearTimeout(topBarTimerRef.current);
+    }
+    topBarTimerRef.current = window.setTimeout(() => {
+      setTopBarLoading(false);
+    }, 350);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (topBarTimerRef.current) {
+        window.clearTimeout(topBarTimerRef.current);
+      }
+    };
+  }, []);
+
   const [switchModalOpen, setSwitchModalOpen] = useState(false);
   const [switchAccountsList, setSwitchAccountsList] = useState<SwitchableAccount[]>([]);
   const [switchManageMode, setSwitchManageMode] = useState(false);
@@ -354,7 +376,6 @@ export function WaslHeaderBar({
     };
   }, []);
 
-  // بحث سريع عن أي حساب مسجل في «وِصل» بالاسم
   useEffect(() => {
     const trimmed = searchQuery.trim();
     if (!searchOpen || !trimmed) {
@@ -370,7 +391,7 @@ export function WaslHeaderBar({
       if (!cancelled) {
         setSearchingAccounts(false);
       }
-    }, 3000);
+    }, 2500);
 
     const timer = setTimeout(() => {
       void (async () => {
@@ -379,7 +400,7 @@ export function WaslHeaderBar({
             .from('profiles')
             .select('id, full_name, avatar_url')
             .ilike('full_name', `%${trimmed}%`)
-            .limit(15);
+            .limit(12);
 
           if (cancelled) return;
 
@@ -418,7 +439,7 @@ export function WaslHeaderBar({
           }
         }
       })();
-    }, 250);
+    }, 300);
 
     return () => {
       cancelled = true;
@@ -479,6 +500,7 @@ export function WaslHeaderBar({
     writeLocalSavedAccounts(updatedList);
 
     setSwitchModalOpen(false);
+    triggerTopProgress();
     onSelectTab('feed');
   };
 
@@ -531,38 +553,51 @@ export function WaslHeaderBar({
     return 'ar';
   });
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(PRIVACY_STORAGE_KEY, String(isPublicAccount));
-    } catch {
-      // تجاهل
-    }
-  }, [isPublicAccount]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(DARK_MODE_STORAGE_KEY, String(darkMode));
-      document.documentElement.classList.toggle('dark', darkMode);
-    } catch {
-      // تجاهل
-    }
-  }, [darkMode]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(LANG_STORAGE_KEY, language);
-      document.documentElement.lang = language;
-      document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr';
-    } catch {
-      // تجاهل
-    }
-  }, [language]);
-
   const showTempNotice = (msg: string) => {
     setSettingsNotice(msg);
     setTimeout(() => {
       setSettingsNotice('');
-    }, 2500);
+    }, 2000);
+  };
+
+  const toggleDarkMode = () => {
+    setDarkMode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(DARK_MODE_STORAGE_KEY, String(next));
+        document.documentElement.classList.toggle('dark', next);
+      } catch {
+        // تجاهل
+      }
+      return next;
+    });
+  };
+
+  const toggleLanguage = () => {
+    setLanguage((prev) => {
+      const next = prev === 'ar' ? 'en' : 'ar';
+      try {
+        localStorage.setItem(LANG_STORAGE_KEY, next);
+        document.documentElement.lang = next;
+        document.documentElement.dir = next === 'ar' ? 'rtl' : 'ltr';
+      } catch {
+        // تجاهل
+      }
+      return next;
+    });
+  };
+
+  const togglePrivacy = () => {
+    setIsPublicAccount((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(PRIVACY_STORAGE_KEY, String(next));
+      } catch {
+        // تجاهل
+      }
+      showTempNotice(next ? 'تم تحويل الحساب إلى عام' : 'تم تحويل الحساب إلى خاص');
+      return next;
+    });
   };
 
   const lockInfo = getNameCooldownInfo(lastNameChangedAt);
@@ -914,7 +949,7 @@ export function WaslHeaderBar({
 
       {/* 1. الهيدر العلوي */}
       <div className="flex items-center justify-between px-4 pt-3 pb-2">
-        <span className="text-2xl font-black tracking-tight bg-gradient-to-l from-cyan-400 to-purple-500 bg-clip-text text-transparent">
+        <span className="text-2xl font-black tracking-tight text-cyan-400">
           وِصل
         </span>
 
@@ -924,7 +959,7 @@ export function WaslHeaderBar({
             onClick={openStoryGallery}
             title="إضافة قصة"
             aria-label="إضافة قصة"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 border border-slate-800 text-lg font-bold text-slate-100 hover:border-cyan-500/40 transition"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 border border-slate-800 text-lg font-bold text-slate-100"
           >
             +
           </button>
@@ -938,10 +973,10 @@ export function WaslHeaderBar({
             }}
             title="بحث عام في وِصل"
             aria-label="بحث عام في وِصل"
-            className={`flex h-9 w-9 items-center justify-center rounded-full border text-sm transition ${
+            className={`flex h-9 w-9 items-center justify-center rounded-full border text-sm ${
               searchOpen
                 ? 'bg-cyan-500/15 border-cyan-400 text-cyan-300'
-                : 'bg-slate-900 border-slate-800 text-slate-100 hover:border-purple-500/40'
+                : 'bg-slate-900 border-slate-800 text-slate-100'
             }`}
           >
             🔍
@@ -952,7 +987,7 @@ export function WaslHeaderBar({
             onClick={() => setDrawerOpen(true)}
             title="القائمة الجانبية"
             aria-label="القائمة الجانبية"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 border border-slate-800 text-base font-bold text-slate-100 hover:border-purple-500/40 transition"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 border border-slate-800 text-base font-bold text-slate-100"
           >
             ☰
           </button>
@@ -961,8 +996,8 @@ export function WaslHeaderBar({
 
       {/* شريط البحث العام عن أي حساب مسجل في وِصل بالاسم */}
       {searchOpen && (
-        <div className="px-4 pb-2.5 space-y-2 border-b border-slate-800/80 bg-slate-950">
-          <div className="flex items-center gap-2 rounded-xl bg-slate-900 border border-purple-500/25 px-3 py-2">
+        <div className="px-4 pb-2.5 space-y-2 border-b border-slate-800 bg-slate-950">
+          <div className="flex items-center gap-2 rounded-xl bg-slate-900 border border-slate-800 px-3 py-2">
             <Search size={14} className="text-cyan-400 shrink-0" />
             <input
               type="text"
@@ -987,7 +1022,7 @@ export function WaslHeaderBar({
           </div>
 
           {normalizedQuery && (
-            <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-800 bg-slate-900/95 divide-y divide-slate-800/70">
+            <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 divide-y divide-slate-800">
               {searchingAccounts ? (
                 <p className="px-3 py-3 text-center text-xs text-slate-400">
                   جاري البحث في حسابات وِصل...
@@ -1003,17 +1038,19 @@ export function WaslHeaderBar({
                       setSearchQuery('');
                       setGlobalAccounts([]);
                     }}
-                    className="w-full flex items-center justify-between px-3 py-2.5 text-right hover:bg-slate-800/70 transition"
+                    className="w-full flex items-center justify-between px-3 py-2.5 text-right hover:bg-slate-800"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       {account.avatar ? (
                         <img
                           src={account.avatar}
                           alt={account.name}
-                          className="h-8 w-8 shrink-0 rounded-full object-cover border border-cyan-500/25"
+                          loading="lazy"
+                          decoding="async"
+                          className="h-8 w-8 shrink-0 rounded-full object-cover border border-slate-700"
                         />
                       ) : (
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 border border-cyan-500/25 text-xs font-black text-cyan-300">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-800 border border-slate-700 text-xs font-black text-cyan-300">
                           {account.name.slice(0, 1)}
                         </div>
                       )}
@@ -1035,35 +1072,44 @@ export function WaslHeaderBar({
         </div>
       )}
 
-      {/* 2. شريط التبويبات العلوي */}
+      {/* 2. شريط التبويبات العلوي + شريط التحميل الرفيع */}
       <nav
         aria-label="أقسام التطبيق"
-        className="sticky top-0 z-30 grid grid-cols-4 bg-slate-950/95 backdrop-blur border-b border-purple-500/20"
+        className="relative grid grid-cols-4 bg-slate-950 border-b border-slate-800 overflow-hidden"
       >
+        {topBarLoading && (
+          <div className="pointer-events-none absolute top-0 inset-x-0 h-[2px] bg-slate-800/60 overflow-hidden z-20">
+            <div className="h-full w-1/2 bg-[#1877F2] animate-pulse" />
+          </div>
+        )}
+
         {tabs.map((tab) => {
           const isActive = activeTab === tab.key;
           return (
             <button
               key={tab.key}
               type="button"
-              onClick={() => onSelectTab(tab.key)}
-              className={`relative flex flex-col items-center justify-center gap-1 py-2.5 px-1 transition ${
+              onClick={() => {
+                triggerTopProgress();
+                onSelectTab(tab.key);
+              }}
+              className={`relative flex flex-col items-center justify-center gap-1 py-2.5 px-1 ${
                 isActive
-                  ? 'text-cyan-300 bg-gradient-to-t from-purple-600/15 to-cyan-500/10'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+                  ? 'text-cyan-400 bg-slate-900'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               <div className="relative flex items-center justify-center text-lg leading-none">
                 <span>{tab.icon}</span>
                 {typeof tab.badge === 'number' && tab.badge > 0 && (
-                  <span className="absolute -top-1.5 -left-2.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-gradient-to-l from-cyan-500 to-purple-600 px-1 text-[10px] font-black text-white">
+                  <span className="absolute -top-1.5 -left-2.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-cyan-500 px-1 text-[10px] font-black text-slate-950">
                     {tab.badge}
                   </span>
                 )}
               </div>
               <span className="text-[11px] font-bold truncate max-w-full">{tab.label}</span>
               {isActive && (
-                <span className="absolute bottom-0 inset-x-2 h-0.5 rounded-full bg-gradient-to-l from-cyan-400 to-purple-500" />
+                <span className="absolute bottom-0 inset-x-3 h-0.5 bg-cyan-400" />
               )}
             </button>
           );
@@ -1076,19 +1122,24 @@ export function WaslHeaderBar({
           <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-slate-900">
             <button
               type="button"
-              onClick={() => onSelectTab('profile')}
+              onClick={() => {
+                triggerTopProgress();
+                onSelectTab('profile');
+              }}
               title="فتح الملف الشخصي"
               aria-label="فتح الملف الشخصي"
-              className="shrink-0 rounded-full focus:outline-none active:scale-95 transition"
+              className="shrink-0 rounded-full focus:outline-none"
             >
               {effectiveAvatar ? (
                 <img
                   src={effectiveAvatar}
                   alt={effectiveName}
-                  className="h-10 w-10 rounded-full object-cover border border-cyan-500/35"
+                  loading="lazy"
+                  decoding="async"
+                  className="h-10 w-10 rounded-full object-cover border border-slate-700"
                 />
               ) : (
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 border border-purple-500/30 text-sm font-black text-cyan-300">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-800 border border-slate-700 text-sm font-black text-cyan-300">
                   {effectiveName.slice(0, 1)}
                 </div>
               )}
@@ -1097,7 +1148,7 @@ export function WaslHeaderBar({
             <button
               type="button"
               onClick={() => setPostModalOpen(true)}
-              className="flex-1 text-right rounded-full bg-slate-900 border border-slate-800 hover:border-purple-500/35 px-4 py-2 text-xs text-slate-400 transition"
+              className="flex-1 text-right rounded-full bg-slate-900 border border-slate-800 px-4 py-2 text-xs text-slate-400"
             >
               بم تفكر؟
             </button>
@@ -1105,14 +1156,14 @@ export function WaslHeaderBar({
             <button
               type="button"
               onClick={openPostGallery}
-              className="flex flex-col items-center justify-center rounded-xl px-2.5 py-1 text-emerald-400 hover:bg-slate-900 transition"
+              className="flex flex-col items-center justify-center rounded-xl px-2.5 py-1 text-emerald-400"
             >
               <span className="text-base leading-none">🖼️</span>
               <span className="text-[10px] font-bold text-slate-300 mt-0.5">صورة</span>
             </button>
           </div>
 
-          <div className="flex gap-2.5 overflow-x-auto px-4 pt-2.5 pb-3.5 border-b border-slate-800/80">
+          <div className="flex gap-2.5 overflow-x-auto px-4 pt-2.5 pb-3.5 border-b border-slate-800">
             {stories.map((story) => {
               if (story.isCreate) {
                 return (
@@ -1120,13 +1171,15 @@ export function WaslHeaderBar({
                     key={story.id}
                     type="button"
                     onClick={openStoryGallery}
-                    className="relative flex h-40 w-28 shrink-0 flex-col justify-between overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 text-center shadow"
+                    className="relative flex h-40 w-28 shrink-0 flex-col justify-between overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 text-center"
                   >
                     <div className="flex-1 w-full bg-slate-800/60 flex items-center justify-center">
                       {story.image ? (
                         <img
                           src={story.image}
                           alt={story.title}
+                          loading="lazy"
+                          decoding="async"
                           className="h-full w-full object-cover opacity-75"
                         />
                       ) : (
@@ -1134,7 +1187,7 @@ export function WaslHeaderBar({
                       )}
                     </div>
                     <div className="relative bg-slate-900 pt-5 pb-2.5 px-1.5">
-                      <span className="absolute -top-4 left-1/2 -translate-x-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-l from-cyan-500 to-purple-600 text-white font-black text-base border-2 border-slate-900">
+                      <span className="absolute -top-4 left-1/2 -translate-x-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-cyan-500 text-slate-950 font-black text-base border-2 border-slate-900">
                         +
                       </span>
                       <span className="block text-[11px] font-bold text-white truncate">
@@ -1151,7 +1204,7 @@ export function WaslHeaderBar({
                     key={story.id}
                     type="button"
                     onClick={() => onSelectStory?.(story)}
-                    className="flex h-40 w-28 shrink-0 flex-col items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-cyan-500 to-purple-600 p-2 text-white shadow"
+                    className="flex h-40 w-28 shrink-0 flex-col items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-cyan-600 to-purple-700 p-2 text-white"
                   >
                     <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20 text-xl">
                       🎵
@@ -1166,12 +1219,14 @@ export function WaslHeaderBar({
                   key={story.id}
                   type="button"
                   onClick={() => onSelectStory?.(story)}
-                  className="relative flex h-40 w-28 shrink-0 flex-col justify-end overflow-hidden rounded-2xl border border-purple-500/25 bg-slate-900 text-right shadow"
+                  className="relative flex h-40 w-28 shrink-0 flex-col justify-end overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 text-right"
                 >
                   {story.image && (
                     <img
                       src={story.image}
                       alt={story.title}
+                      loading="lazy"
+                      decoding="async"
                       className="absolute inset-0 h-full w-full object-cover"
                     />
                   )}
@@ -1193,8 +1248,8 @@ export function WaslHeaderBar({
 
       {/* نافذة إنشاء منشور بالشكل الجديد */}
       {postModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-xs p-0 sm:p-4">
-          <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#1c1d21] text-white shadow-2xl flex flex-col justify-between">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 p-0 sm:p-4">
+          <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#1c1d21] text-white flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between border-b border-white/10 bg-[#242529] px-4 py-3">
                 <div className="flex items-center gap-3">
@@ -1202,7 +1257,7 @@ export function WaslHeaderBar({
                     type="button"
                     onClick={resetPostModal}
                     aria-label="رجوع"
-                    className="flex h-8 w-8 items-center justify-center rounded-full text-slate-200 hover:bg-white/10 transition"
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-slate-200 hover:bg-white/10"
                   >
                     <ArrowRight size={18} />
                   </button>
@@ -1213,9 +1268,9 @@ export function WaslHeaderBar({
                   type="button"
                   onClick={handlePublishPostModal}
                   disabled={!canSubmitPost}
-                  className={`rounded-lg px-3 py-1 text-xs font-bold transition ${
+                  className={`rounded-lg px-3 py-1 text-xs font-bold ${
                     canSubmitPost
-                      ? 'bg-[#1877F2] text-white hover:bg-[#166fe5]'
+                      ? 'bg-[#1877F2] text-white'
                       : 'text-slate-500 cursor-not-allowed'
                   }`}
                 >
@@ -1229,6 +1284,8 @@ export function WaslHeaderBar({
                     <img
                       src={effectiveAvatar}
                       alt={effectiveName}
+                      loading="lazy"
+                      decoding="async"
                       className="h-11 w-11 shrink-0 rounded-full border border-white/15 object-cover"
                     />
                   ) : (
@@ -1251,7 +1308,7 @@ export function WaslHeaderBar({
                     value={postText}
                     onChange={(e) => setPostText(e.target.value)}
                     placeholder="شارك لحظة بارزة من يومك..."
-                    className={`w-full resize-none outline-none transition ${
+                    className={`w-full resize-none outline-none ${
                       selectedTheme === 'none'
                         ? 'bg-transparent text-base text-white placeholder:text-slate-400'
                         : `${activeThemeObj.className} text-center text-lg font-bold ${
@@ -1289,6 +1346,8 @@ export function WaslHeaderBar({
                     <img
                       src={postImageData}
                       alt="معاينة الصورة"
+                      loading="lazy"
+                      decoding="async"
                       className="max-h-56 w-full rounded-xl object-cover border border-white/10"
                     />
                     <button
@@ -1319,8 +1378,8 @@ export function WaslHeaderBar({
                         type="button"
                         onClick={() => setSelectedTheme(theme.id)}
                         aria-label={theme.label}
-                        className={`h-7 w-7 shrink-0 rounded-lg transition ${SWATCH_COLORS[theme.id]} ${
-                          active ? 'ring-2 ring-white scale-105' : 'opacity-90 hover:opacity-100'
+                        className={`h-7 w-7 shrink-0 rounded-lg ${SWATCH_COLORS[theme.id]} ${
+                          active ? 'ring-2 ring-white' : 'opacity-90'
                         }`}
                       />
                     );
@@ -1333,7 +1392,7 @@ export function WaslHeaderBar({
                     themeStripRef.current?.scrollBy({ left: -120, behavior: 'smooth' });
                   }}
                   aria-label="المزيد من الألوان"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#32343a] text-slate-200 hover:bg-[#3e4047]"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#32343a] text-slate-200"
                 >
                   <ChevronLeft size={16} />
                 </button>
@@ -1345,7 +1404,7 @@ export function WaslHeaderBar({
                     key={item.id}
                     type="button"
                     onClick={item.onClick}
-                    className="flex w-full items-center gap-3 px-4 py-2.5 text-right text-xs font-semibold text-slate-100 hover:bg-white/5 transition"
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-right text-xs font-semibold text-slate-100 hover:bg-white/5"
                   >
                     {item.icon}
                     <span>{item.label}</span>
@@ -1359,7 +1418,7 @@ export function WaslHeaderBar({
                 type="button"
                 onClick={handlePublishPostModal}
                 disabled={!canSubmitPost}
-                className="w-full rounded-lg bg-[#1877F2] py-2.5 text-sm font-extrabold text-white shadow transition enabled:hover:bg-[#166fe5] enabled:active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45"
+                className="w-full rounded-lg bg-[#1877F2] py-2.5 text-sm font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {publishingPost ? 'جاري النشر...' : 'نشر'}
               </button>
@@ -1370,10 +1429,10 @@ export function WaslHeaderBar({
 
       {/* نافذة إتمام ونشر القصة */}
       {storyModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
           <form
             onSubmit={handleStorySave}
-            className="w-full max-w-sm rounded-2xl border border-purple-500/30 bg-slate-900 p-4 space-y-3 shadow-2xl"
+            className="w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-900 p-4 space-y-3"
           >
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <h3 className="text-sm font-black text-white">إضافة قصة جديدة</h3>
@@ -1391,12 +1450,14 @@ export function WaslHeaderBar({
                 <img
                   src={storyImageData}
                   alt={storyFileName || 'صورة القصة'}
+                  loading="lazy"
+                  decoding="async"
                   className="h-44 w-full object-cover"
                 />
                 <button
                   type="button"
                   onClick={openStoryGallery}
-                  className="absolute bottom-2 right-2 rounded-lg bg-slate-950/85 px-2.5 py-1 text-[10px] font-bold text-cyan-300 hover:text-cyan-200"
+                  className="absolute bottom-2 right-2 rounded-lg bg-slate-950/85 px-2.5 py-1 text-[10px] font-bold text-cyan-300"
                 >
                   تغيير الصورة
                 </button>
@@ -1408,7 +1469,7 @@ export function WaslHeaderBar({
               value={storyText}
               onChange={(e) => setStoryText(e.target.value)}
               placeholder="اكتب نص قصتك..."
-              className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
+              className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none"
             />
 
             <div className="flex gap-2 pt-1">
@@ -1421,7 +1482,7 @@ export function WaslHeaderBar({
               </button>
               <button
                 type="submit"
-                className="flex-1 rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2 text-xs font-bold text-white"
+                className="flex-1 rounded-xl bg-cyan-600 py-2 text-xs font-bold text-white"
               >
                 نشر القصة
               </button>
@@ -1432,8 +1493,8 @@ export function WaslHeaderBar({
 
       {/* القائمة الجانبية عند الضغط على ☰ */}
       {drawerOpen && (
-        <div className="fixed inset-0 z-50 flex justify-start bg-black/65 backdrop-blur-xs">
-          <div className="w-80 max-w-[85vw] h-full overflow-y-auto bg-slate-900 border-l border-purple-500/25 p-4 flex flex-col justify-between gap-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex justify-start bg-black/65">
+          <div className="w-80 max-w-[85vw] h-full overflow-y-auto bg-slate-900 border-l border-slate-800 p-4 flex flex-col justify-between gap-4">
             <div className="space-y-3">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="min-w-0">
@@ -1455,7 +1516,7 @@ export function WaslHeaderBar({
                     setDrawerOpen(false);
                     openStoryGallery();
                   }}
-                  className="w-full flex items-center justify-between rounded-xl bg-slate-950/80 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-100 hover:border-cyan-500/40 transition"
+                  className="w-full flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-100"
                 >
                   <span>إضافة قصة جديدة</span>
                   <span className="text-cyan-400 font-black">+</span>
@@ -1467,7 +1528,7 @@ export function WaslHeaderBar({
                     setDrawerOpen(false);
                     setSearchOpen(true);
                   }}
-                  className="w-full flex items-center justify-between rounded-xl bg-slate-950/80 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-100 hover:border-purple-500/40 transition"
+                  className="w-full flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-100"
                 >
                   <span>بحث عام في وِصل</span>
                   <span>🔍</span>
@@ -1477,9 +1538,10 @@ export function WaslHeaderBar({
                   type="button"
                   onClick={() => {
                     setDrawerOpen(false);
+                    triggerTopProgress();
                     onSelectTab('profile');
                   }}
-                  className="w-full flex items-center justify-between rounded-xl bg-slate-950/80 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-100 hover:border-cyan-500/40 transition"
+                  className="w-full flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-100"
                 >
                   <span>الملف الشخصي</span>
                   <span>👤</span>
@@ -1491,18 +1553,18 @@ export function WaslHeaderBar({
                     setDrawerOpen(false);
                     triggerOpenSwitchAccount();
                   }}
-                  className="w-full flex items-center justify-between rounded-xl bg-slate-950/80 border border-purple-500/35 px-3.5 py-2.5 text-xs font-bold text-cyan-200 hover:border-cyan-400/60 transition"
+                  className="w-full flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-cyan-200"
                 >
                   <span>تبديل الحساب</span>
                   <span>⇄</span>
                 </button>
               </div>
 
-              <div className="rounded-2xl border border-purple-500/20 bg-slate-950/75 overflow-hidden">
+              <div className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden">
                 <button
                   type="button"
                   onClick={() => setSettingsMenuOpen((prev) => !prev)}
-                  className="w-full flex items-center justify-between px-3.5 py-3 text-xs font-black text-white hover:bg-slate-900/70 transition"
+                  className="w-full flex items-center justify-between px-3.5 py-3 text-xs font-black text-white"
                 >
                   <span className="flex items-center gap-2">
                     <span>⚙️</span>
@@ -1512,7 +1574,7 @@ export function WaslHeaderBar({
                 </button>
 
                 {settingsMenuOpen && (
-                  <div className="border-t border-slate-800/90 p-2 space-y-1.5 bg-slate-950/90">
+                  <div className="border-t border-slate-800 p-2 space-y-1.5 bg-slate-950">
                     <button
                       type="button"
                       onClick={() => {
@@ -1520,7 +1582,7 @@ export function WaslHeaderBar({
                         setSettingsSearch('');
                         setSettingsScreenOpen(true);
                       }}
-                      className="w-full flex items-center justify-between rounded-xl bg-slate-900/85 border border-slate-800 px-3 py-2.5 text-xs font-bold text-slate-100 hover:border-cyan-500/35 transition"
+                      className="w-full flex items-center justify-between rounded-xl bg-slate-900 border border-slate-800 px-3 py-2.5 text-xs font-bold text-slate-100"
                     >
                       <span className="flex items-center gap-2">
                         <span>👤</span>
@@ -1529,16 +1591,16 @@ export function WaslHeaderBar({
                       <span className="text-[11px] text-cyan-400">فتح</span>
                     </button>
 
-                    <div className="flex items-center justify-between rounded-xl bg-slate-900/85 border border-slate-800 px-3 py-2.5">
+                    <div className="flex items-center justify-between rounded-xl bg-slate-900 border border-slate-800 px-3 py-2.5">
                       <span className="flex items-center gap-2 text-xs font-bold text-slate-100">
                         <span>🌙</span>
                         <span>الوضع المظلم</span>
                       </span>
                       <button
                         type="button"
-                        onClick={() => setDarkMode((prev) => !prev)}
+                        onClick={toggleDarkMode}
                         aria-label="تبديل الوضع المظلم"
-                        className={`relative h-6 w-11 rounded-full transition ${
+                        className={`relative h-6 w-11 rounded-full ${
                           darkMode ? 'bg-cyan-500' : 'bg-slate-700'
                         }`}
                       >
@@ -1552,8 +1614,8 @@ export function WaslHeaderBar({
 
                     <button
                       type="button"
-                      onClick={() => setLanguage((prev) => (prev === 'ar' ? 'en' : 'ar'))}
-                      className="w-full flex items-center justify-between rounded-xl bg-slate-900/85 border border-slate-800 px-3 py-2.5 text-xs font-bold text-slate-100 hover:border-purple-500/35 transition"
+                      onClick={toggleLanguage}
+                      className="w-full flex items-center justify-between rounded-xl bg-slate-900 border border-slate-800 px-3 py-2.5 text-xs font-bold text-slate-100"
                     >
                       <span className="flex items-center gap-2">
                         <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-black text-cyan-300">
@@ -1561,7 +1623,7 @@ export function WaslHeaderBar({
                         </span>
                         <span>اللغة</span>
                       </span>
-                      <span className="rounded-lg bg-purple-500/15 border border-purple-500/30 px-2.5 py-0.5 text-[11px] font-bold text-purple-300">
+                      <span className="rounded-lg bg-slate-800 px-2.5 py-0.5 text-[11px] font-bold text-cyan-300">
                         {language === 'ar' ? 'العربية' : 'English'}
                       </span>
                     </button>
@@ -1572,7 +1634,7 @@ export function WaslHeaderBar({
               <button
                 type="button"
                 onClick={() => void handleTriggerLogout()}
-                className="shrink-0 w-full flex items-center justify-between rounded-xl border border-rose-500/35 bg-rose-950/35 px-3.5 py-2.5 text-xs font-bold text-rose-300 hover:bg-rose-950/55 transition"
+                className="shrink-0 w-full flex items-center justify-between rounded-xl border border-rose-500/35 bg-rose-950/35 px-3.5 py-2.5 text-xs font-bold text-rose-300"
               >
                 <span>تسجيل الخروج</span>
                 <span>🚪</span>
@@ -1590,12 +1652,12 @@ export function WaslHeaderBar({
           dir="rtl"
           className="fixed inset-0 z-[70] flex flex-col justify-between bg-[#18191a] text-[#e4e6eb] overflow-y-auto"
         >
-          <div className="sticky top-0 z-10 flex items-center justify-between bg-[#18191a]/95 backdrop-blur px-4 pt-4 pb-2">
+          <div className="sticky top-0 z-10 flex items-center justify-between bg-[#18191a] px-4 pt-4 pb-2">
             <button
               type="button"
               onClick={() => setSwitchModalOpen(false)}
               aria-label="إغلاق"
-              className="flex h-9 w-9 items-center justify-center rounded-full text-slate-300 hover:bg-white/10 transition"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-slate-300 hover:bg-white/10"
             >
               <X size={20} />
             </button>
@@ -1604,7 +1666,7 @@ export function WaslHeaderBar({
               type="button"
               onClick={() => setSwitchManageMode((prev) => !prev)}
               aria-label="إدارة الحسابات المحفوظة"
-              className={`flex h-9 w-9 items-center justify-center rounded-full transition ${
+              className={`flex h-9 w-9 items-center justify-center rounded-full ${
                 switchManageMode
                   ? 'bg-cyan-500/20 text-cyan-300'
                   : 'text-slate-200 hover:bg-white/10'
@@ -1624,9 +1686,7 @@ export function WaslHeaderBar({
             {switchAccountsList.length === 0 ? (
               <div className="rounded-2xl border border-white/10 bg-[#242526] p-8 text-center space-y-2">
                 <p className="text-sm font-bold text-white">لا توجد حسابات محفوظة بعد</p>
-                <p className="text-xs text-slate-400">
-                  سيتم حفظ الحسابات للدخول السريع.
-                </p>
+                <p className="text-xs text-slate-400">سيتم حفظ الحسابات للدخول السريع.</p>
               </div>
             ) : (
               switchAccountsList.map((acc) => {
@@ -1640,13 +1700,15 @@ export function WaslHeaderBar({
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') handlePickAccountFromModal(acc);
                     }}
-                    className="flex items-center justify-between rounded-2xl border border-white/15 bg-[#242526] px-4 py-3.5 shadow-sm hover:bg-[#2d2f31] active:scale-[0.99] transition cursor-pointer"
+                    className="flex items-center justify-between rounded-2xl border border-white/15 bg-[#242526] px-4 py-3.5 hover:bg-[#2d2f31] cursor-pointer"
                   >
                     <div className="flex items-center gap-3.5 min-w-0">
                       {avatarSrc ? (
                         <img
                           src={avatarSrc}
                           alt={acc.name}
+                          loading="lazy"
+                          decoding="async"
                           className="h-12 w-12 shrink-0 rounded-full object-cover border border-white/15"
                         />
                       ) : (
@@ -1665,7 +1727,7 @@ export function WaslHeaderBar({
                           handleDeleteAccountFromModal(acc.id);
                         }}
                         aria-label={`إزالة ${acc.name}`}
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 transition"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500/15 text-rose-400"
                       >
                         <Trash2 size={16} />
                       </button>
@@ -1682,7 +1744,7 @@ export function WaslHeaderBar({
             <button
               type="button"
               onClick={() => void handleStartFreshAccountOrProfile()}
-              className="w-full rounded-full bg-[#2d2f31] py-3 text-xs font-extrabold text-white hover:bg-[#383a3d] transition"
+              className="w-full rounded-full bg-[#2d2f31] py-3 text-xs font-extrabold text-white"
             >
               استخدام ملف شخصي آخر
             </button>
@@ -1690,7 +1752,7 @@ export function WaslHeaderBar({
             <button
               type="button"
               onClick={() => void handleStartFreshAccountOrProfile()}
-              className="w-full rounded-full border border-[#3b82f6] bg-transparent py-3 text-xs font-extrabold text-[#4599FF] hover:bg-[#3b82f6]/10 transition"
+              className="w-full rounded-full border border-[#3b82f6] bg-transparent py-3 text-xs font-extrabold text-[#4599FF]"
             >
               إنشاء حساب جديد
             </button>
@@ -1708,13 +1770,13 @@ export function WaslHeaderBar({
           dir="rtl"
           className="fixed inset-0 z-50 overflow-y-auto bg-[#18191a] text-[#e4e6eb]"
         >
-          <div className="sticky top-0 z-20 flex items-center justify-between border-b border-white/10 bg-[#242526]/95 backdrop-blur px-4 py-3">
+          <div className="sticky top-0 z-20 flex items-center justify-between border-b border-white/10 bg-[#242526] px-4 py-3">
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => setSettingsScreenOpen(false)}
                 aria-label="رجوع"
-                className="flex h-9 w-9 items-center justify-center rounded-full text-slate-200 hover:bg-white/10 transition"
+                className="flex h-9 w-9 items-center justify-center rounded-full text-slate-200 hover:bg-white/10"
               >
                 <ChevronRight size={22} />
               </button>
@@ -1725,7 +1787,7 @@ export function WaslHeaderBar({
               type="button"
               onClick={() => setSettingsScreenOpen(false)}
               aria-label="إغلاق"
-              className="flex h-9 w-9 items-center justify-center rounded-full text-slate-300 hover:bg-white/10 transition"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-slate-300 hover:bg-white/10"
             >
               <Search size={18} />
             </button>
@@ -1758,8 +1820,7 @@ export function WaslHeaderBar({
               </div>
             )}
 
-            {/* بطاقة حساب وِصل */}
-            <div className="rounded-2xl border border-white/10 bg-[#242526] p-4 space-y-3.5 shadow">
+            <div className="rounded-2xl border border-white/10 bg-[#242526] p-4 space-y-3.5">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-black tracking-wide text-cyan-400">وِصل</span>
               </div>
@@ -1776,7 +1837,7 @@ export function WaslHeaderBar({
                   <button
                     type="button"
                     onClick={openEditDetailsModal}
-                    className="flex w-full items-center justify-between text-right py-1.5 px-2 -mx-2 rounded-xl hover:bg-white/5 transition"
+                    className="flex w-full items-center justify-between text-right py-1.5 px-2 -mx-2 rounded-xl hover:bg-white/5"
                   >
                     <span className="flex items-center gap-3 text-xs font-bold text-slate-200">
                       <UserCog size={18} className="text-cyan-400 shrink-0" />
@@ -1790,7 +1851,7 @@ export function WaslHeaderBar({
                   <button
                     type="button"
                     onClick={() => showTempNotice('حماية الحساب نشطة وجلساتك مؤمنة')}
-                    className="flex w-full items-center justify-between text-right py-1 hover:opacity-85 transition"
+                    className="flex w-full items-center justify-between text-right py-1"
                   >
                     <span className="flex items-center gap-3 text-xs font-bold text-slate-200">
                       <KeyRound size={18} className="text-slate-400 shrink-0" />
@@ -1805,9 +1866,10 @@ export function WaslHeaderBar({
                     type="button"
                     onClick={() => {
                       setSettingsScreenOpen(false);
+                      triggerTopProgress();
                       onSelectTab('feed');
                     }}
-                    className="flex w-full items-center justify-between text-right py-1 hover:opacity-85 transition"
+                    className="flex w-full items-center justify-between text-right py-1"
                   >
                     <span className="flex items-center gap-3 text-xs font-bold text-slate-200">
                       <SlidersHorizontal size={18} className="text-slate-400 shrink-0" />
@@ -1821,7 +1883,7 @@ export function WaslHeaderBar({
                   <button
                     type="button"
                     onClick={() => showTempNotice('حالة الحساب موثّقة في وِصل')}
-                    className="flex w-full items-center justify-between text-right py-1 hover:opacity-85 transition"
+                    className="flex w-full items-center justify-between text-right py-1"
                   >
                     <span className="flex items-center gap-3 text-xs font-bold text-slate-200">
                       <CheckCircle2 size={18} className="text-slate-400 shrink-0" />
@@ -1843,7 +1905,6 @@ export function WaslHeaderBar({
               </div>
             </div>
 
-            {/* قسم الأدوات والموارد */}
             <div className="space-y-3 pt-1">
               <div>
                 <h3 className="text-sm font-extrabold text-white">الأدوات والموارد</h3>
@@ -1861,15 +1922,7 @@ export function WaslHeaderBar({
                     </span>
                     <button
                       type="button"
-                      onClick={() => {
-                        setIsPublicAccount((prev) => {
-                          const next = !prev;
-                          showTempNotice(
-                            next ? 'تم تحويل الحساب إلى عام' : 'تم تحويل الحساب إلى خاص'
-                          );
-                          return next;
-                        });
-                      }}
+                      onClick={togglePrivacy}
                       className="rounded-lg bg-cyan-500/15 border border-cyan-500/30 px-3 py-1 text-[11px] font-bold text-cyan-300"
                     >
                       تغيير
@@ -1887,7 +1940,7 @@ export function WaslHeaderBar({
                           : 'حسابك خاص ويقتصر على جهات اتصالك'
                       )
                     }
-                    className="flex w-full items-center gap-3 rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3 text-right text-xs font-bold text-white hover:bg-white/5 transition"
+                    className="flex w-full items-center gap-3 rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3 text-right text-xs font-bold text-white hover:bg-white/5"
                   >
                     <ShieldCheck size={18} className="text-slate-300 shrink-0" />
                     <span>التحقق من الخصوصية</span>
@@ -1896,7 +1949,6 @@ export function WaslHeaderBar({
               </div>
             </div>
 
-            {/* قسم التفضيلات */}
             <div className="space-y-3 pt-1">
               <div>
                 <h3 className="text-sm font-extrabold text-white">التفضيلات</h3>
@@ -1914,9 +1966,9 @@ export function WaslHeaderBar({
                     </span>
                     <button
                       type="button"
-                      onClick={() => setDarkMode((prev) => !prev)}
+                      onClick={toggleDarkMode}
                       aria-label="تبديل الوضع المظلم"
-                      className={`relative h-6 w-11 rounded-full transition ${
+                      className={`relative h-6 w-11 rounded-full ${
                         darkMode ? 'bg-cyan-500' : 'bg-slate-600'
                       }`}
                     >
@@ -1932,8 +1984,8 @@ export function WaslHeaderBar({
                 {matchSettingsItem('اللغة العربية English') && (
                   <button
                     type="button"
-                    onClick={() => setLanguage((prev) => (prev === 'ar' ? 'en' : 'ar'))}
-                    className="flex w-full items-center justify-between rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3 text-xs font-bold text-white hover:bg-white/5 transition"
+                    onClick={toggleLanguage}
+                    className="flex w-full items-center justify-between rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3 text-xs font-bold text-white hover:bg-white/5"
                   >
                     <span className="flex items-center gap-3">
                       <span className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] font-black text-cyan-300">
@@ -1941,7 +1993,7 @@ export function WaslHeaderBar({
                       </span>
                       <span>اللغة</span>
                     </span>
-                    <span className="rounded-lg bg-purple-500/15 border border-purple-500/30 px-2.5 py-0.5 text-[11px] font-bold text-purple-300">
+                    <span className="rounded-lg bg-slate-800 px-2.5 py-0.5 text-[11px] font-bold text-cyan-300">
                       {language === 'ar' ? 'العربية' : 'English'}
                     </span>
                   </button>
@@ -1960,7 +2012,7 @@ export function WaslHeaderBar({
                         showTempNotice('تعذر مسح الكاش الآن');
                       }
                     }}
-                    className="flex w-full items-center gap-3 rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3 text-right text-xs font-bold text-rose-300 hover:bg-white/5 transition"
+                    className="flex w-full items-center gap-3 rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3 text-right text-xs font-bold text-rose-300 hover:bg-white/5"
                   >
                     <Trash2 size={18} className="text-rose-400 shrink-0" />
                     <span>مسح الكاش المؤقت</span>
@@ -1976,11 +2028,11 @@ export function WaslHeaderBar({
       {editDetailsOpen && (
         <div
           dir="rtl"
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4"
         >
           <form
             onSubmit={handleSaveDetails}
-            className="w-full max-w-sm rounded-2xl border border-cyan-500/25 bg-[#242526] p-4 space-y-4 text-white shadow-2xl"
+            className="w-full max-w-sm rounded-2xl border border-slate-700 bg-[#242526] p-4 space-y-4 text-white"
           >
             <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
               <h3 className="text-sm font-black text-white">تعديل التفاصيل الشخصية</h3>
@@ -1988,7 +2040,7 @@ export function WaslHeaderBar({
                 type="button"
                 onClick={() => setEditDetailsOpen(false)}
                 aria-label="إغلاق"
-                className="rounded-lg bg-white/5 p-1 text-slate-400 hover:text-white transition"
+                className="rounded-lg bg-white/5 p-1 text-slate-400 hover:text-white"
               >
                 <X size={16} />
               </button>
@@ -2033,14 +2085,14 @@ export function WaslHeaderBar({
               <button
                 type="button"
                 onClick={() => setEditDetailsOpen(false)}
-                className="flex-1 rounded-xl border border-white/10 bg-[#18191a] py-2.5 text-xs font-bold text-slate-300 hover:bg-white/5 transition"
+                className="flex-1 rounded-xl border border-white/10 bg-[#18191a] py-2.5 text-xs font-bold text-slate-300"
               >
                 إلغاء
               </button>
               <button
                 type="submit"
                 disabled={savingDetails}
-                className="flex-1 rounded-xl bg-gradient-to-l from-cyan-500 to-blue-600 py-2.5 text-xs font-extrabold text-white shadow hover:opacity-95 disabled:opacity-50 transition"
+                className="flex-1 rounded-xl bg-cyan-600 py-2.5 text-xs font-extrabold text-white disabled:opacity-50"
               >
                 {savingDetails ? 'جاري الحفظ...' : 'حفظ التغييرات'}
               </button>
