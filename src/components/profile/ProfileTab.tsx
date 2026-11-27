@@ -19,12 +19,25 @@ import {
   UserPlus,
   X,
   UserCheck,
+  MoreHorizontal,
+  BellOff,
+  Bell,
+  Bookmark,
+  MessageSquare,
+  Tag,
+  Globe,
+  Megaphone,
+  Pencil,
+  Link2,
+  Lock,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { supabase } from '@/lib/supabase';
 
 type ProfileSectionTab = 'all' | 'photos' | 'about';
 type FollowModalTab = 'followers' | 'following';
+type PostPrivacy = 'public' | 'friends' | 'only_me';
+type CommentAudience = 'everyone' | 'friends' | 'followers' | 'off';
 
 interface FollowerPerson {
   id: string;
@@ -54,6 +67,12 @@ interface ActivityPostItem {
   likesCount?: number;
   sharesCount?: number;
   comments?: PostCommentItem[];
+  mutedNotifications?: boolean;
+  saved?: boolean;
+  privacy?: PostPrivacy;
+  commentAudience?: CommentAudience;
+  taggedPeople?: string[];
+  boosted?: boolean;
 }
 
 interface PersistedProfileData {
@@ -177,8 +196,8 @@ function VerifiedBlueBadge({ size = 18 }: { size?: number }) {
   );
 }
 
-const STORAGE_PREFIX = 'wasl_p3_';
-const DB_NAME = 'wasl_profile_db_v4';
+const STORAGE_PREFIX = 'wasl_p4_';
+const DB_NAME = 'wasl_profile_db_v5';
 const DB_STORE = 'profile_state_by_user';
 const MEDIA_BUCKET = 'wasl-media';
 
@@ -359,11 +378,29 @@ export default function ProfileTab() {
   const [openCommentsPostId, setOpenCommentsPostId] = useState<string | null>(null);
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
 
+  // حالة قائمة الثلاث نقاط والنوافذ الفرعية لكل منشور/صورة
+  const [menuPostId, setMenuPostId] = useState<string | null>(null);
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
+  const [editingPostText, setEditingPostText] = useState<string>('');
+  const [tagModalPostId, setTagModalPostId] = useState<string | null>(null);
+  const [tagInputValue, setTagInputValue] = useState<string>('');
+  const [audienceModalPostId, setAudienceModalPostId] = useState<string | null>(null);
+  const [privacyModalPostId, setPrivacyModalPostId] = useState<string | null>(null);
+  const [adModalPostId, setAdModalPostId] = useState<string | null>(null);
+  const [adBudgetDays, setAdBudgetDays] = useState<string>('3 أيام · وصول موسّع');
+
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const highlightInputRef = useRef<HTMLInputElement | null>(null);
 
   const isFounderAccount = isVerifiedFounder(currentUid, currentEmail);
+
+  const notifyUser = (msg: string) => {
+    setStatusMessage(msg);
+    window.setTimeout(() => {
+      setStatusMessage((prev) => (prev === msg ? '' : prev));
+    }, 2400);
+  };
 
   const resetLocalViewForNewUser = (
     fallbackTitle: string,
@@ -391,6 +428,7 @@ export default function ProfileTab() {
     setOpenCommentsPostId(null);
     setShowFollowModal(false);
     setIsEditingFollowCounts(false);
+    setMenuPostId(null);
   };
 
   useEffect(() => {
@@ -561,6 +599,9 @@ export default function ProfileTab() {
               likesCount: 0,
               sharesCount: 0,
               comments: [],
+              privacy: 'public',
+              commentAudience: 'everyone',
+              taggedPeople: [],
             };
           });
 
@@ -751,10 +792,7 @@ export default function ProfileTab() {
     setFollowersCount(nextFollowers);
     setFollowingCount(nextFollowing);
     setIsEditingFollowCounts(false);
-    setStatusMessage('تم تحديث أعداد المتابعين');
-    setTimeout(() => {
-      setStatusMessage((prev) => (prev === 'تم تحديث أعداد المتابعين' ? '' : prev));
-    }, 2000);
+    notifyUser('تم تحديث أعداد المتابعين');
     if (typeof store.updateProfile === 'function') {
       store.updateProfile({
         followersCount: nextFollowers,
@@ -800,10 +838,7 @@ export default function ProfileTab() {
     const rawDataUrl = await readRawFileAsDataUrl(file);
     if (!rawDataUrl) return;
     onLoaded(rawDataUrl, file.name, file);
-    setStatusMessage('تم تحديث الصورة');
-    setTimeout(() => {
-      setStatusMessage((prev) => (prev === 'تم تحديث الصورة' ? '' : prev));
-    }, 2000);
+    notifyUser('تم تحديث الصورة');
     e.target.value = '';
   };
 
@@ -814,6 +849,12 @@ export default function ProfileTab() {
       likesCount: 0,
       sharesCount: 0,
       comments: [],
+      mutedNotifications: false,
+      saved: false,
+      privacy: 'public',
+      commentAudience: 'everyone',
+      taggedPeople: [],
+      boosted: false,
     };
     setActivityPosts((prev) => [fullItem, ...prev]);
 
@@ -939,6 +980,12 @@ export default function ProfileTab() {
 
   const handleAddComment = (postId: string, e: React.FormEvent) => {
     e.preventDefault();
+    const targetPost = activityPosts.find((p) => p.id === postId);
+    if (targetPost?.commentAudience === 'off') {
+      notifyUser('التعليقات متوقفة لهذا المنشور');
+      return;
+    }
+
     const text = (commentInputs[postId] || '').trim();
     if (!text) return;
 
@@ -983,6 +1030,7 @@ export default function ProfileTab() {
         });
       } else if (navigator.clipboard) {
         await navigator.clipboard.writeText(shareText);
+        notifyUser('تم نسخ نص المنشور للمشاركة');
       }
     } catch {
       // تجاهل إلغاء المشاركة من المتصفح
@@ -992,10 +1040,127 @@ export default function ProfileTab() {
   const handleDeletePost = (postId: string) => {
     const target = activityPosts.find((p) => p.id === postId);
     setActivityPosts((prev) => prev.filter((p) => p.id !== postId));
+    setMenuPostId(null);
 
     if (target?.dbId) {
       void supabase.from('posts').delete().eq('id', target.dbId);
     }
+    notifyUser('تم حذف المنشور');
+  };
+
+  // إجراءات قائمة الثلاث نقاط لكل منشور أو صورة
+  const handleTogglePostNotifications = (post: ActivityPostItem) => {
+    const nextMuted = !post.mutedNotifications;
+    setActivityPosts((prev) =>
+      prev.map((p) => (p.id === post.id ? { ...p, mutedNotifications: nextMuted } : p))
+    );
+    setMenuPostId(null);
+    notifyUser(
+      nextMuted
+        ? 'تم إيقاف تشغيل الإشعارات لهذا المنشور'
+        : 'تم تفعيل الإشعارات لهذا المنشور'
+    );
+  };
+
+  const handleToggleSavePost = (post: ActivityPostItem) => {
+    const nextSaved = !post.saved;
+    setActivityPosts((prev) =>
+      prev.map((p) => (p.id === post.id ? { ...p, saved: nextSaved } : p))
+    );
+    setMenuPostId(null);
+    notifyUser(
+      nextSaved
+        ? 'تم حفظ المنشور في العناصر المحفوظة'
+        : 'تمت إزالة المنشور من المحفوظات'
+    );
+  };
+
+  const handleCopyPostLink = async (post: ActivityPostItem) => {
+    const postUrl = `${window.location.origin}/post/${encodeURIComponent(post.id)}`;
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(postUrl);
+      }
+    } catch {
+      // تجاهل
+    }
+    setMenuPostId(null);
+    notifyUser('تم نسخ رابط المنشور');
+  };
+
+  const handleOpenEditPost = (post: ActivityPostItem) => {
+    setEditingPostId(post.id);
+    setEditingPostText(post.content || post.headline);
+    setMenuPostId(null);
+  };
+
+  const handleConfirmEditPost = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPostId) return;
+    const clean = editingPostText.trim();
+    setActivityPosts((prev) =>
+      prev.map((p) => (p.id === editingPostId ? { ...p, content: clean } : p))
+    );
+    setEditingPostId(null);
+    setEditingPostText('');
+    notifyUser('تم تحديث المنشور');
+  };
+
+  const handleAddTagToPost = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tagModalPostId) return;
+    const name = tagInputValue.trim();
+    if (!name) return;
+
+    setActivityPosts((prev) =>
+      prev.map((p) =>
+        p.id === tagModalPostId
+          ? {
+              ...p,
+              taggedPeople: Array.from(new Set([...(p.taggedPeople || []), name])),
+            }
+          : p
+      )
+    );
+    setTagInputValue('');
+    setTagModalPostId(null);
+    notifyUser(`تمت الإشارة إلى ${name}`);
+  };
+
+  const handleSelectCommentAudience = (audience: CommentAudience) => {
+    if (!audienceModalPostId) return;
+    setActivityPosts((prev) =>
+      prev.map((p) => (p.id === audienceModalPostId ? { ...p, commentAudience: audience } : p))
+    );
+    setAudienceModalPostId(null);
+    notifyUser('تم تحديث إعدادات التعليق على المنشور');
+  };
+
+  const handleSelectPrivacy = (privacy: PostPrivacy) => {
+    if (!privacyModalPostId) return;
+    setActivityPosts((prev) =>
+      prev.map((p) => (p.id === privacyModalPostId ? { ...p, privacy } : p))
+    );
+    setPrivacyModalPostId(null);
+    notifyUser('تم تحديث خصوصية المنشور');
+  };
+
+  const handleConfirmBoostAd = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adModalPostId) return;
+    setActivityPosts((prev) =>
+      prev.map((p) => (p.id === adModalPostId ? { ...p, boosted: true } : p))
+    );
+    setAdModalPostId(null);
+    notifyUser('تم تفعيل الإعلان الترويجي للمنشور');
+  };
+
+  const activeMenuPost = activityPosts.find((p) => p.id === menuPostId) || null;
+
+  const renderPrivacyIcon = (privacy?: PostPrivacy) => {
+    if (privacy === 'only_me') return <Lock size={11} className="text-amber-400" />;
+    if (privacy === 'friends') return <Users size={11} className="text-purple-400" />;
+    return <Globe size={11} className="text-slate-400" />;
   };
 
   return (
@@ -1200,6 +1365,7 @@ export default function ProfileTab() {
         </div>
       </section>
 
+      {/* نافذة قائمة المتابعون / يتابع */}
       {showFollowModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
@@ -1354,6 +1520,340 @@ export default function ProfileTab() {
         </div>
       )}
 
+      {/* القائمة السفلية لزر الثلاث نقاط (...) للمنشورات والصور */}
+      {activeMenuPost && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 sm:items-center sm:p-4"
+          onClick={() => setMenuPostId(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-slate-700/80 bg-slate-900 p-3 pb-5 shadow-2xl space-y-1"
+          >
+            <div className="mx-auto mb-2 h-1.5 w-11 rounded-full bg-slate-700" />
+
+            <button
+              type="button"
+              onClick={() => handleTogglePostNotifications(activeMenuPost)}
+              className="flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-right text-xs font-bold text-slate-100 hover:bg-slate-800/80 transition"
+            >
+              <span>
+                {activeMenuPost.mutedNotifications
+                  ? 'تشغيل الإشعارات لهذا المنشور'
+                  : 'إيقاف تشغيل الإشعارات لهذا المنشور'}
+              </span>
+              {activeMenuPost.mutedNotifications ? (
+                <Bell size={18} className="text-cyan-400 shrink-0" />
+              ) : (
+                <BellOff size={18} className="text-slate-300 shrink-0" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleToggleSavePost(activeMenuPost)}
+              className="flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-right hover:bg-slate-800/80 transition"
+            >
+              <div className="text-right">
+                <p className="text-xs font-bold text-slate-100">
+                  {activeMenuPost.saved ? 'إزالة المنشور من المحفوظات' : 'حفظ المنشور'}
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  أضف هذا العنصر إلى العناصر المحفوظة لديك.
+                </p>
+              </div>
+              <Bookmark
+                size={18}
+                className={
+                  activeMenuPost.saved
+                    ? 'fill-cyan-400 text-cyan-400 shrink-0'
+                    : 'text-slate-300 shrink-0'
+                }
+              />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const target = activeMenuPost;
+                setMenuPostId(null);
+                void handleSharePost(target);
+              }}
+              className="flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-right text-xs font-bold text-slate-100 hover:bg-slate-800/80 transition"
+            >
+              <span>مشاركة</span>
+              <Share2 size={18} className="text-slate-300 shrink-0" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAudienceModalPostId(activeMenuPost.id);
+                setMenuPostId(null);
+              }}
+              className="flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-right text-xs font-bold text-slate-100 hover:bg-slate-800/80 transition"
+            >
+              <span>من الذي يمكنه التعليق على منشورك؟</span>
+              <MessageSquare size={18} className="text-slate-300 shrink-0" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setTagModalPostId(activeMenuPost.id);
+                setTagInputValue('');
+                setMenuPostId(null);
+              }}
+              className="flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-right text-xs font-bold text-slate-100 hover:bg-slate-800/80 transition"
+            >
+              <span>إشارة في صورة</span>
+              <Tag size={18} className="text-slate-300 shrink-0" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setPrivacyModalPostId(activeMenuPost.id);
+                setMenuPostId(null);
+              }}
+              className="flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-right text-xs font-bold text-slate-100 hover:bg-slate-800/80 transition"
+            >
+              <span>تعديل الخصوصية</span>
+              <Globe size={18} className="text-slate-300 shrink-0" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAdModalPostId(activeMenuPost.id);
+                setMenuPostId(null);
+              }}
+              className="flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-right text-xs font-bold text-slate-100 hover:bg-slate-800/80 transition"
+            >
+              <span>إنشاء إعلان</span>
+              <Megaphone size={18} className="text-slate-300 shrink-0" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleOpenEditPost(activeMenuPost)}
+              className="flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-right text-xs font-bold text-slate-100 hover:bg-slate-800/80 transition"
+            >
+              <span>تعديل المنشور</span>
+              <Pencil size={18} className="text-slate-300 shrink-0" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleCopyPostLink(activeMenuPost)}
+              className="flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-right text-xs font-bold text-slate-100 hover:bg-slate-800/80 transition"
+            >
+              <span>نسخ الرابط</span>
+              <Link2 size={18} className="text-slate-300 shrink-0" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleDeletePost(activeMenuPost.id)}
+              className="flex w-full items-center justify-between rounded-xl px-3.5 py-3 text-right text-xs font-bold text-rose-400 hover:bg-rose-950/35 transition"
+            >
+              <span>حذف المنشور</span>
+              <Trash2 size={18} className="text-rose-400 shrink-0" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة تعديل المنشور */}
+      {editingPostId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          onClick={() => setEditingPostId(null)}
+        >
+          <form
+            onSubmit={handleConfirmEditPost}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl border border-cyan-500/30 bg-slate-900 p-4 space-y-3 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-white">تعديل المنشور</h3>
+              <button
+                type="button"
+                onClick={() => setEditingPostId(null)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <textarea
+              rows={4}
+              value={editingPostText}
+              onChange={(e) => setEditingPostText(e.target.value)}
+              className="w-full rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs text-white focus:border-cyan-500/40 focus:outline-none"
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingPostId(null)}
+                className="flex-1 rounded-xl border border-slate-800 bg-slate-950 py-2 text-xs font-bold text-slate-300"
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                className="flex-1 rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2 text-xs font-bold text-white"
+              >
+                حفظ التعديل
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* نافذة إشارة في صورة */}
+      {tagModalPostId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          onClick={() => setTagModalPostId(null)}
+        >
+          <form
+            onSubmit={handleAddTagToPost}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl border border-cyan-500/30 bg-slate-900 p-4 space-y-3 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-white">إشارة في صورة</h3>
+              <button
+                type="button"
+                onClick={() => setTagModalPostId(null)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <input
+              type="text"
+              value={tagInputValue}
+              onChange={(e) => setTagInputValue(e.target.value)}
+              placeholder="اكتب اسم الشخص للإشارة إليه..."
+              className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white focus:border-cyan-500/40 focus:outline-none"
+            />
+            <button
+              type="submit"
+              className="w-full rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2 text-xs font-bold text-white"
+            >
+              إضافة إشارة
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* نافذة من الذي يمكنه التعليق */}
+      {audienceModalPostId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          onClick={() => setAudienceModalPostId(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl border border-cyan-500/30 bg-slate-900 p-4 space-y-2 shadow-2xl"
+          >
+            <h3 className="text-sm font-black text-white mb-2">
+              من الذي يمكنه التعليق على منشورك؟
+            </h3>
+            {(
+              [
+                { id: 'everyone', label: 'الكل' },
+                { id: 'friends', label: 'الأصدقاء' },
+                { id: 'followers', label: 'المتابِعون' },
+                { id: 'off', label: 'إيقاف التعليقات' },
+              ] as { id: CommentAudience; label: string }[]
+            ).map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => handleSelectCommentAudience(opt.id)}
+                className="flex w-full items-center justify-between rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-xs font-bold text-slate-200 hover:border-cyan-500/40"
+              >
+                <span>{opt.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* نافذة تعديل الخصوصية */}
+      {privacyModalPostId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          onClick={() => setPrivacyModalPostId(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl border border-cyan-500/30 bg-slate-900 p-4 space-y-2 shadow-2xl"
+          >
+            <h3 className="text-sm font-black text-white mb-2">تعديل الخصوصية</h3>
+            {(
+              [
+                { id: 'public', label: 'عام — أي شخص على وِصل' },
+                { id: 'friends', label: 'الأصدقاء فقط' },
+                { id: 'only_me', label: 'أنا فقط' },
+              ] as { id: PostPrivacy; label: string }[]
+            ).map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => handleSelectPrivacy(opt.id)}
+                className="flex w-full items-center justify-between rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-xs font-bold text-slate-200 hover:border-cyan-500/40"
+              >
+                <span>{opt.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* نافذة إنشاء إعلان */}
+      {adModalPostId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          onClick={() => setAdModalPostId(null)}
+        >
+          <form
+            onSubmit={handleConfirmBoostAd}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl border border-cyan-500/30 bg-slate-900 p-4 space-y-3 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-white">إنشاء إعلان للمنشور</h3>
+              <button
+                type="button"
+                onClick={() => setAdModalPostId(null)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <select
+              value={adBudgetDays}
+              onChange={(e) => setAdBudgetDays(e.target.value)}
+              className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white focus:border-cyan-500/40 focus:outline-none"
+            >
+              <option value="3 أيام · وصول موسّع">3 أيام · وصول موسّع</option>
+              <option value="7 أيام · تفاعل أعلى">7 أيام · تفاعل أعلى</option>
+              <option value="14 يوم · حملة كاملة">14 يوم · حملة كاملة</option>
+            </select>
+            <button
+              type="submit"
+              className="w-full rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2 text-xs font-bold text-white"
+            >
+              تشغيل الإعلان الآن
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* نموذج تعديل التفاصيل الشخصية */}
       {editingDetails && (
         <form
           onSubmit={handleSaveDetails}
@@ -1592,6 +2092,7 @@ export default function ProfileTab() {
         </section>
       )}
 
+      {/* قسم الصور مع زر الثلاث نقاط (...) على كل صورة */}
       {activeSubTab === 'photos' && (
         <section className="rounded-2xl border border-slate-800 bg-slate-900/75 p-4 space-y-3">
           <div className="flex items-center gap-1.5">
@@ -1604,20 +2105,30 @@ export default function ProfileTab() {
           ) : (
             <div className="grid grid-cols-3 gap-2">
               {photoPosts.map((p, idx) => (
-                <img
-                  key={`${p.id}-${idx}`}
-                  src={p.image}
-                  alt={`صورة ${idx + 1}`}
-                  loading="lazy"
-                  decoding="async"
-                  className="h-28 w-full rounded-xl object-cover border border-slate-800"
-                />
+                <div key={`${p.id}-${idx}`} className="relative group">
+                  <img
+                    src={p.image}
+                    alt={`صورة ${idx + 1}`}
+                    loading="lazy"
+                    decoding="async"
+                    className="h-28 w-full rounded-xl object-cover border border-slate-800"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMenuPostId(p.id)}
+                    aria-label="خيارات الصورة"
+                    className="absolute top-1.5 left-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-slate-950/85 text-white border border-slate-700/80 hover:bg-slate-800 transition"
+                  >
+                    <MoreHorizontal size={15} />
+                  </button>
+                </div>
               ))}
             </div>
           )}
         </section>
       )}
 
+      {/* منشورات الملف الشخصي مع زر الثلاث نقاط (...) في أعلى كل منشور */}
       {activeSubTab === 'all' && (
         <section className="space-y-3">
           <h2 className="px-1 text-sm font-black text-white">المنشورات</h2>
@@ -1656,20 +2167,44 @@ export default function ProfileTab() {
                           <span className="truncate">{post.headline}</span>
                           {isFounderAccount && <VerifiedBlueBadge size={14} />}
                         </p>
-                        <p className="text-[10px] text-slate-400">{post.createdAt}</p>
+                        <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                          <span>{post.createdAt}</span>
+                          <span>·</span>
+                          {renderPrivacyIcon(post.privacy)}
+                          {post.boosted && (
+                            <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 text-[9px] font-bold text-cyan-300">
+                              مُروّج
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 
                     <button
                       type="button"
-                      onClick={() => handleDeletePost(post.id)}
-                      title="حذف المنشور"
-                      aria-label="حذف المنشور"
-                      className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-950/40 hover:text-rose-400 transition"
+                      onClick={() => setMenuPostId(post.id)}
+                      title="خيارات المنشور"
+                      aria-label="خيارات المنشور"
+                      className="rounded-full p-1.5 text-slate-300 hover:bg-slate-800 hover:text-white transition"
                     >
-                      <Trash2 size={14} />
+                      <MoreHorizontal size={18} />
                     </button>
                   </div>
+
+                  {post.taggedPeople && post.taggedPeople.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-cyan-300">
+                      <Tag size={12} />
+                      <span>إشارة إلى:</span>
+                      {post.taggedPeople.map((person) => (
+                        <span
+                          key={person}
+                          className="rounded-lg bg-cyan-950/50 border border-cyan-500/25 px-2 py-0.5 font-bold"
+                        >
+                          {person}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
                   {post.content && (
                     <p className="text-xs leading-relaxed text-slate-200 whitespace-pre-line">
@@ -1678,17 +2213,27 @@ export default function ProfileTab() {
                   )}
 
                   {post.image && (
-                    <img
-                      src={post.image}
-                      alt={post.headline}
-                      loading="lazy"
-                      decoding="async"
-                      className={`w-full rounded-xl object-cover border border-slate-800 ${
-                        post.kind === 'avatar'
-                          ? 'mx-auto h-64 w-64 rounded-full'
-                          : 'max-h-80'
-                      }`}
-                    />
+                    <div className="relative">
+                      <img
+                        src={post.image}
+                        alt={post.headline}
+                        loading="lazy"
+                        decoding="async"
+                        className={`w-full rounded-xl object-cover border border-slate-800 ${
+                          post.kind === 'avatar'
+                            ? 'mx-auto h-64 w-64 rounded-full'
+                            : 'max-h-80'
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setMenuPostId(post.id)}
+                        aria-label="خيارات الصورة"
+                        className="absolute top-2.5 left-2.5 flex h-8 w-8 items-center justify-center rounded-full bg-slate-950/80 text-white border border-slate-700/80 hover:bg-slate-800 transition"
+                      >
+                        <MoreHorizontal size={16} />
+                      </button>
+                    </div>
                   )}
 
                   <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 text-[11px] text-slate-400">
@@ -1774,13 +2319,19 @@ export default function ProfileTab() {
                               [post.id]: e.target.value,
                             }))
                           }
-                          placeholder="اكتب تعليقاً..."
-                          className="flex-1 rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
+                          placeholder={
+                            post.commentAudience === 'off'
+                              ? 'التعليقات متوقفة لهذا المنشور'
+                              : 'اكتب تعليقاً...'
+                          }
+                          disabled={post.commentAudience === 'off'}
+                          className="flex-1 rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none disabled:opacity-50"
                         />
                         <button
                           type="submit"
+                          disabled={post.commentAudience === 'off'}
                           aria-label="إرسال التعليق"
-                          className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 text-white"
+                          className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 text-white disabled:opacity-50"
                         >
                           <Send size={14} />
                         </button>
