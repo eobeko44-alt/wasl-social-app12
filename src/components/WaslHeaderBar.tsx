@@ -769,7 +769,7 @@ export function WaslHeaderBar({
       icon: '💬',
       badge: unreadChatsCount > 0 ? unreadChatsCount : undefined,
     },
-    { key: 'contacts', label: 'جهات الاتصال', icon: '👥' },
+    { key: 'contacts', label: 'الأصدقاء', icon: '👥' },
     { key: 'profile', label: 'حسابي', icon: '👤' },
   ];
 
