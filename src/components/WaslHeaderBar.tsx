@@ -313,27 +313,19 @@ export function WaslHeaderBar({
   const [searchingAccounts, setSearchingAccounts] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // شريط التحميل العلوي الخفيف عند التنقل
-  const [topBarLoading, setTopBarLoading] = useState(false);
-  const topBarTimerRef = useRef<number | null>(null);
-
-  const triggerTopProgress = () => {
-    setTopBarLoading(true);
-    if (topBarTimerRef.current) {
-      window.clearTimeout(topBarTimerRef.current);
-    }
-    topBarTimerRef.current = window.setTimeout(() => {
-      setTopBarLoading(false);
-    }, 350);
-  };
+  // شريط تحميل خفيف يظهر للحظات عند تغيّر التبويب
+  const [tabPulse, setTabPulse] = useState(false);
+  const isFirstRenderRef = useRef(true);
 
   useEffect(() => {
-    return () => {
-      if (topBarTimerRef.current) {
-        window.clearTimeout(topBarTimerRef.current);
-      }
-    };
-  }, []);
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false;
+      return;
+    }
+    setTabPulse(true);
+    const t = window.setTimeout(() => setTabPulse(false), 300);
+    return () => window.clearTimeout(t);
+  }, [activeTab]);
 
   const [switchModalOpen, setSwitchModalOpen] = useState(false);
   const [switchAccountsList, setSwitchAccountsList] = useState<SwitchableAccount[]>([]);
@@ -485,7 +477,7 @@ export function WaslHeaderBar({
     return () => {
       window.removeEventListener('wasl-open-switch-account', handleEvent);
     };
-  });
+  }, []);
 
   const handlePickAccountFromModal = (acc: SwitchableAccount) => {
     if (switchManageMode) return;
@@ -500,7 +492,6 @@ export function WaslHeaderBar({
     writeLocalSavedAccounts(updatedList);
 
     setSwitchModalOpen(false);
-    triggerTopProgress();
     onSelectTab('feed');
   };
 
@@ -1072,15 +1063,13 @@ export function WaslHeaderBar({
         </div>
       )}
 
-      {/* 2. شريط التبويبات العلوي + شريط التحميل الرفيع */}
+      {/* 2. شريط التبويبات العلوي */}
       <nav
         aria-label="أقسام التطبيق"
-        className="relative grid grid-cols-4 bg-slate-950 border-b border-slate-800 overflow-hidden"
+        className="relative grid grid-cols-4 bg-slate-950 border-b border-slate-800"
       >
-        {topBarLoading && (
-          <div className="pointer-events-none absolute top-0 inset-x-0 h-[2px] bg-slate-800/60 overflow-hidden z-20">
-            <div className="h-full w-1/2 bg-[#1877F2] animate-pulse" />
-          </div>
+        {tabPulse && (
+          <div className="pointer-events-none absolute top-0 inset-x-0 h-[2px] bg-[#1877F2]" />
         )}
 
         {tabs.map((tab) => {
@@ -1089,10 +1078,7 @@ export function WaslHeaderBar({
             <button
               key={tab.key}
               type="button"
-              onClick={() => {
-                triggerTopProgress();
-                onSelectTab(tab.key);
-              }}
+              onClick={() => onSelectTab(tab.key)}
               className={`relative flex flex-col items-center justify-center gap-1 py-2.5 px-1 ${
                 isActive
                   ? 'text-cyan-400 bg-slate-900'
@@ -1122,10 +1108,7 @@ export function WaslHeaderBar({
           <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-slate-900">
             <button
               type="button"
-              onClick={() => {
-                triggerTopProgress();
-                onSelectTab('profile');
-              }}
+              onClick={() => onSelectTab('profile')}
               title="فتح الملف الشخصي"
               aria-label="فتح الملف الشخصي"
               className="shrink-0 rounded-full focus:outline-none"
@@ -1538,7 +1521,6 @@ export function WaslHeaderBar({
                   type="button"
                   onClick={() => {
                     setDrawerOpen(false);
-                    triggerTopProgress();
                     onSelectTab('profile');
                   }}
                   className="w-full flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-100"
@@ -1866,7 +1848,6 @@ export function WaslHeaderBar({
                     type="button"
                     onClick={() => {
                       setSettingsScreenOpen(false);
-                      triggerTopProgress();
                       onSelectTab('feed');
                     }}
                     className="flex w-full items-center justify-between text-right py-1"
