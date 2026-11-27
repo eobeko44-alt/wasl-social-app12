@@ -16,11 +16,22 @@ import {
   Share2,
   Trash2,
   Send,
+  UserPlus,
+  X,
+  UserCheck,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { supabase } from '@/lib/supabase';
 
 type ProfileSectionTab = 'all' | 'photos' | 'about';
+type FollowModalTab = 'followers' | 'following';
+
+interface FollowerPerson {
+  id: string;
+  name: string;
+  handleOrCity: string;
+  avatar?: string;
+}
 
 interface PostCommentItem {
   id: string;
@@ -56,6 +67,10 @@ interface PersistedProfileData {
   education: string;
   interestsText: string;
   isPublicAccount: boolean;
+  followersCount: number;
+  followingCount: number;
+  followersList: FollowerPerson[];
+  followingList: FollowerPerson[];
   highlights: Array<{ id: string; title: string; image?: string }>;
   posts: ActivityPostItem[];
 }
@@ -67,6 +82,54 @@ const VERIFIED_FOUNDER_IDS = new Set<string>([
 const VERIFIED_FOUNDER_EMAILS = new Set<string>([
   'abobaker096605@gmail.com',
 ]);
+
+const SAMPLE_FOLLOWER_NAMES = [
+  'أحمد الطيب',
+  'محمد عثمان',
+  'عمر الفاروق',
+  'ياسر حسن',
+  'معتز إبراهيم',
+  'طارق النور',
+  'وليد عبد الله',
+  'مازن صلاح',
+  'هيثم كمال',
+  'أنس محمود',
+  'رامي خالد',
+  'حاتم مصطفى',
+];
+
+function formatCompactCount(num: number): string {
+  if (!Number.isFinite(num) || num < 0) return '0';
+  if (num >= 1_000_000) {
+    const millions = num / 1_000_000;
+    const formatted = Number.isInteger(millions)
+      ? String(millions)
+      : millions.toFixed(1).replace(/\.0$/, '');
+    return `${formatted}M`;
+  
+function buildDisplayFollowers(
+  customList: FollowerPerson[],
+  totalCount: number,
+  prefixLabel: string
+): FollowerPerson[] {
+  const result: FollowerPerson[] = [...customList];
+  const targetLength = Math.max(customList.length, Math.min(totalCount, 100));
+
+  let idx = 0;
+  while (result.length < targetLength) {
+    const sampleName = SAMPLE_FOLLOWER_NAMES[idx % SAMPLE_FOLLOWER_NAMES.length];
+    const extraNum = Math.floor(idx / SAMPLE_FOLLOWER_NAMES.length) + 1;
+    const displayTitle = extraNum > 1 ? `${sampleName} ${extraNum}` : sampleName;
+    result.push({
+      id: `${prefixLabel}-auto-${idx}`,
+      name: displayTitle,
+      handleOrCity: 'شندي · متابع على وِصل',
+    });
+    idx += 1;
+  }
+
+  return result;
+}
 
 function isVerifiedFounder(userId?: string | null, email?: string | null): boolean {
   if (userId && typeof userId === 'string' && VERIFIED_FOUNDER_IDS.has(userId.trim())) {
@@ -104,8 +167,8 @@ function VerifiedBlueBadge({ size = 18 }: { size?: number }) {
   );
 }
 
-const STORAGE_PREFIX = 'wasl_p_';
-const DB_NAME = 'wasl_profile_db_v2';
+const STORAGE_PREFIX = 'wasl_p2_';
+const DB_NAME = 'wasl_profile_db_v3';
 const DB_STORE = 'profile_state_by_user';
 const MEDIA_BUCKET = 'wasl-media';
 
@@ -115,6 +178,8 @@ const DEFAULT_HOMETOWN = 'شندي';
 const DEFAULT_BIRTHDAY = '٢٠ سبتمبر ٢٠٠٢';
 const DEFAULT_EDUCATION = 'كلية التربية - معلمين';
 const DEFAULT_INTERESTS = 'PUBG Mobile، Garena Free Fire';
+const DEFAULT_FOLLOWERS = 20_000_000;
+const DEFAULT_FOLLOWING = 120;
 
 function scopedKey(uid: string, suffix: string): string {
   return `${STORAGE_PREFIX}${uid}_${suffix}`;
@@ -255,6 +320,18 @@ export default function ProfileTab() {
   const [avatarImage, setAvatarImage] = useState<string>('');
   const [isPublicAccount, setIsPublicAccount] = useState<boolean>(true);
 
+  const [followersCount, setFollowersCount] = useState<number>(DEFAULT_FOLLOWERS);
+  const [followingCount, setFollowingCount] = useState<number>(DEFAULT_FOLLOWING);
+  const [followersList, setFollowersList] = useState<FollowerPerson[]>([]);
+  const [followingList, setFollowingList] = useState<FollowerPerson[]>([]);
+
+  const [showFollowModal, setShowFollowModal] = useState<boolean>(false);
+  const [followModalTab, setFollowModalTab] = useState<FollowModalTab>('followers');
+  const [isEditingFollowCounts, setIsEditingFollowCounts] = useState<boolean>(false);
+  const [draftFollowers, setDraftFollowers] = useState<string>(String(DEFAULT_FOLLOWERS));
+  const [draftFollowing, setDraftFollowing] = useState<string>(String(DEFAULT_FOLLOWING));
+  const [newFollowerName, setNewFollowerName] = useState<string>('');
+
   const [editingDetails, setEditingDetails] = useState(false);
   const [bio, setBio] = useState<string>(DEFAULT_BIO);
   const [city, setCity] = useState<string>(DEFAULT_CITY);
@@ -279,7 +356,8 @@ export default function ProfileTab() {
 
   const isFounderAccount = isVerifiedFounder(currentUid, currentEmail);
 
-  const resetLocalViewForNewUser = (fallbackTitle: string) => {
+  const resetLocalViewForNewUser = (fallbackTitle: string, uid?: string | null, email?: string | null) => {
+    const founder = isVerifiedFounder(uid, email);
     setDisplayName(fallbackTitle);
     setCoverImage('');
     setAvatarImage('');
@@ -290,10 +368,16 @@ export default function ProfileTab() {
     setEducation(DEFAULT_EDUCATION);
     setInterestsText(DEFAULT_INTERESTS);
     setIsPublicAccount(true);
+    setFollowersCount(founder ? DEFAULT_FOLLOWERS : 0);
+    setFollowingCount(founder ? DEFAULT_FOLLOWING : 0);
+    setFollowersList([]);
+    setFollowingList([]);
     setHighlights([]);
     setActivityPosts([]);
     setEditingDetails(false);
     setOpenCommentsPostId(null);
+    setShowFollowModal(false);
+    setIsEditingFollowCounts(false);
   };
 
   useEffect(() => {
@@ -310,7 +394,7 @@ export default function ProfileTab() {
         setCurrentUid('');
         setCurrentEmail('');
         setHydratedUid('');
-        resetLocalViewForNewUser('مستخدم وِصل');
+        resetLocalViewForNewUser('مستخدم وِصل', null, null);
         return;
       }
 
@@ -320,6 +404,10 @@ export default function ProfileTab() {
 
       setCurrentUid(uid);
       setCurrentEmail(email || '');
+
+      const founder = isVerifiedFounder(uid, email);
+      const fallbackFollowers = founder ? DEFAULT_FOLLOWERS : 0;
+      const fallbackFollowing = founder ? DEFAULT_FOLLOWING : 0;
 
       const metaName =
         typeof meta?.full_name === 'string' && meta.full_name.trim()
@@ -353,6 +441,14 @@ export default function ProfileTab() {
       if (localSnap.birthday) setBirthday(String(localSnap.birthday));
       if (localSnap.education) setEducation(String(localSnap.education));
       if (localSnap.interestsText) setInterestsText(String(localSnap.interestsText));
+      setFollowersCount(
+        typeof localSnap.followersCount === 'number' ? localSnap.followersCount : fallbackFollowers
+      );
+      setFollowingCount(
+        typeof localSnap.followingCount === 'number' ? localSnap.followingCount : fallbackFollowing
+      );
+      if (Array.isArray(localSnap.followersList)) setFollowersList(localSnap.followersList);
+      if (Array.isArray(localSnap.followingList)) setFollowingList(localSnap.followingList);
       if (Array.isArray(localSnap.highlights)) setHighlights(localSnap.highlights);
       if (Array.isArray(localSnap.posts)) setActivityPosts(localSnap.posts);
 
@@ -369,6 +465,10 @@ export default function ProfileTab() {
         if (dbData.birthday) setBirthday(String(dbData.birthday));
         if (dbData.education) setEducation(String(dbData.education));
         if (dbData.interestsText) setInterestsText(String(dbData.interestsText));
+        if (typeof dbData.followersCount === 'number') setFollowersCount(dbData.followersCount);
+        if (typeof dbData.followingCount === 'number') setFollowingCount(dbData.followingCount);
+        if (Array.isArray(dbData.followersList)) setFollowersList(dbData.followersList);
+        if (Array.isArray(dbData.followingList)) setFollowingList(dbData.followingList);
         if (typeof dbData.isPublicAccount === 'boolean') {
           setIsPublicAccount(dbData.isPublicAccount);
         }
@@ -499,6 +599,10 @@ export default function ProfileTab() {
         education,
         interestsText,
         isPublicAccount,
+        followersCount,
+        followingCount,
+        followersList,
+        followingList,
         highlights,
         posts: activityPosts,
       });
@@ -518,6 +622,10 @@ export default function ProfileTab() {
     education,
     interestsText,
     isPublicAccount,
+    followersCount,
+    followingCount,
+    followersList,
+    followingList,
     highlights,
     activityPosts,
   ]);
@@ -613,6 +721,62 @@ export default function ProfileTab() {
     .split(/[,،\n]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+
+  const openFollowListModal = (tab: FollowModalTab) => {
+    setFollowModalTab(tab);
+    setDraftFollowers(String(followersCount));
+    setDraftFollowing(String(followingCount));
+    setIsEditingFollowCounts(false);
+    setNewFollowerName('');
+    setShowFollowModal(true);
+  };
+
+  const handleSaveFollowCounts = (e: React.FormEvent) => {
+    e.preventDefault();
+    const nextFollowers = Math.max(0, Number.parseInt(draftFollowers, 10) || 0);
+    const nextFollowing = Math.max(0, Number.parseInt(draftFollowing, 10) || 0);
+    setFollowersCount(nextFollowers);
+    setFollowingCount(nextFollowing);
+    setIsEditingFollowCounts(false);
+    setStatusMessage('تم تحديث أعداد المتابعين');
+    setTimeout(() => {
+      setStatusMessage((prev) => (prev === 'تم تحديث أعداد المتابعين' ? '' : prev));
+    }, 2000);
+    if (typeof store.updateProfile === 'function') {
+      store.updateProfile({
+        followersCount: nextFollowers,
+        followingCount: nextFollowing,
+      });
+    }
+  };
+
+  const handleAddPersonToList = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = newFollowerName.trim();
+    if (!cleanName) return;
+
+    const person: FollowerPerson = {
+      id: `person-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: cleanName,
+      handleOrCity: city || 'شندي',
+    };
+
+    if (followModalTab === 'followers') {
+      setFollowersList((prev) => [person, ...prev]);
+      setFollowersCount((prev) => prev + 1);
+      setDraftFollowers((prev) => String((Number.parseInt(prev, 10) || 0) + 1));
+    } else {
+      setFollowingList((prev) => [person, ...prev]);
+      setFollowingCount((prev) => prev + 1);
+      setDraftFollowing((prev) => String((Number.parseInt(prev, 10) || 0) + 1));
+    }
+    setNewFollowerName('');
+  };
+
+  const displayedFollowPeople =
+    followModalTab === 'followers'
+      ? buildDisplayFollowers(followersList, followersCount, 'follower')
+      : buildDisplayFollowers(followingList, followingCount, 'following');
 
   const handlePickImage = async (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -855,7 +1019,7 @@ export default function ProfileTab() {
         </div>
       )}
 
-      {/* البطاقة الرئيسية: الغلاف + الصورة الشخصية + الاسم + الإحصائيات + الأزرار */}
+      {/* البطاقة الرئيسية: الغلاف + الصورة الشخصية + الاسم + المتابعون + الإحصائيات + الأزرار */}
       <section className="overflow-hidden rounded-2xl border border-purple-500/20 bg-slate-900/80 shadow-xl">
         <div className="relative h-44 w-full bg-gradient-to-l from-purple-700/60 via-slate-800 to-cyan-600/50">
           {coverImage && (
@@ -919,11 +1083,38 @@ export default function ProfileTab() {
             </button>
           </div>
 
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <h1 className="flex items-center gap-1.5 text-xl font-black text-white">
               <span>{displayName}</span>
               {isFounderAccount && <VerifiedBlueBadge size={19} />}
             </h1>
+
+            <div className="flex flex-wrap items-center gap-2 pt-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => openFollowListModal('followers')}
+                className="inline-flex items-center gap-1 rounded-lg bg-slate-950/80 border border-slate-800 px-2.5 py-1 font-bold text-slate-200 hover:border-cyan-500/40 transition"
+              >
+                <UserPlus size={13} className="text-cyan-400" />
+                <span>المتابعون</span>
+                <strong className="text-cyan-300">{formatCompactCount(followersCount)}</strong>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openFollowListModal('following')}
+                className="inline-flex items-center gap-1 rounded-lg bg-slate-950/80 border border-slate-800 px-2.5 py-1 font-bold text-slate-200 hover:border-cyan-500/40 transition"
+              >
+                <span>يتابع</span>
+                <strong className="text-cyan-300">{formatCompactCount(followingCount)}</strong>
+              </button>
+
+              <span className="inline-flex items-center gap-1 rounded-lg bg-slate-950/60 border border-slate-800/80 px-2.5 py-1 font-bold text-slate-300">
+                <strong className="text-white">{activityPosts.length}</strong>
+                <span>منشورات</span>
+              </span>
+            </div>
+
             <p className="pt-0.5 text-xs leading-relaxed text-slate-300">{bio}</p>
           </div>
 
@@ -952,12 +1143,16 @@ export default function ProfileTab() {
               <p className="text-sm font-black text-cyan-400">{friends.length}</p>
               <p className="text-[11px] font-semibold text-slate-400">أصدقاء</p>
             </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950/75 py-2.5 px-2 text-center">
+            <button
+              type="button"
+              onClick={() => openFollowListModal('followers')}
+              className="rounded-xl border border-slate-800 bg-slate-950/75 py-2.5 px-2 text-center hover:border-cyan-500/40 transition"
+            >
               <p className="text-sm font-black text-cyan-400">
-                {Array.isArray(store.contacts) ? store.contacts.length : friends.length}
+                {formatCompactCount(followersCount)}
               </p>
-              <p className="text-[11px] font-semibold text-slate-400">جهات اتصال</p>
-            </div>
+              <p className="text-[11px] font-semibold text-slate-400">المتابعون</p>
+            </button>
             <div className="rounded-xl border border-slate-800 bg-slate-950/75 py-2.5 px-2 text-center">
               <p className="text-sm font-black text-cyan-400">{activityPosts.length}</p>
               <p className="text-[11px] font-semibold text-slate-400">منشورات</p>
@@ -992,6 +1187,161 @@ export default function ProfileTab() {
           })}
         </div>
       </section>
+
+      {/* نافذة قائمة المتابعون / يتابع الحقيقية */}
+      {showFollowModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          onClick={() => setShowFollowModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex h-[75vh] max-h-[600px] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-cyan-500/30 bg-slate-900 shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFollowModalTab('followers')}
+                  className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${
+                    followModalTab === 'followers'
+                      ? 'bg-cyan-600/20 text-cyan-300 border border-cyan-500/40'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  المتابعون ({formatCompactCount(followersCount)})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFollowModalTab('following')}
+                  className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${
+                    followModalTab === 'following'
+                      ? 'bg-purple-600/20 text-purple-300 border border-purple-500/40'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  يتابع ({formatCompactCount(followingCount)})
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsEditingFollowCounts((prev) => !prev)}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1 text-[11px] font-bold text-cyan-300 hover:border-cyan-500/40"
+                >
+                  {isEditingFollowCounts ? 'إخفاء الضبط' : 'ضبط الرقم'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowFollowModal(false)}
+                  aria-label="إغلاق"
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {isEditingFollowCounts && (
+              <form
+                onSubmit={handleSaveFollowCounts}
+                className="border-b border-slate-800 bg-slate-950/70 p-3.5 space-y-2.5"
+              >
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="mb-1 block text-[11px] text-slate-400">عدد المتابعون</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={draftFollowers}
+                      onChange={(e) => setDraftFollowers(e.target.value)}
+                      className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white focus:border-cyan-500/40 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] text-slate-400">عدد يتابع</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={draftFollowing}
+                      onChange={(e) => setDraftFollowing(e.target.value)}
+                      className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-white focus:border-cyan-500/40 focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  className="w-full rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-1.5 text-xs font-bold text-white"
+                >
+                  حفظ الرقم
+                </button>
+              </form>
+            )}
+
+            <form
+              onSubmit={handleAddPersonToList}
+              className="flex items-center gap-2 border-b border-slate-800/80 p-3"
+            >
+              <input
+                type="text"
+                value={newFollowerName}
+                onChange={(e) => setNewFollowerName(e.target.value)}
+                placeholder={
+                  followModalTab === 'followers'
+                    ? 'إضافة اسم متابع للقائمة...'
+                    : 'إضافة اسم حساب تتابعه...'
+                }
+                className="flex-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
+              />
+              <button
+                type="submit"
+                className="rounded-xl bg-cyan-600 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-500 transition"
+              >
+                إضافة
+              </button>
+            </form>
+
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-800/70 p-2">
+              {displayedFollowPeople.length === 0 ? (
+                <p className="py-8 text-center text-xs text-slate-500">
+                  لا يوجد أشخاص في هذه القائمة حالياً.
+                </p>
+              ) : (
+                displayedFollowPeople.map((person) => (
+                  <div
+                    key={person.id}
+                    className="flex items-center justify-between gap-3 rounded-xl px-2.5 py-2.5 hover:bg-slate-800/50 transition"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {person.avatar ? (
+                        <img
+                          src={person.avatar}
+                          alt={person.name}
+                          className="h-10 w-10 shrink-0 rounded-full object-cover border border-slate-700"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/25 to-purple-600/25 text-xs font-black text-cyan-300">
+                          {person.name.slice(0, 1)}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-bold text-white">{person.name}</p>
+                        <p className="truncate text-[11px] text-slate-400">{person.handleOrCity}</p>
+                      </div>
+                    </div>
+
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1 text-[11px] font-bold text-cyan-300">
+                      <UserCheck size={12} />
+                      <span>{followModalTab === 'followers' ? 'يتابعك' : 'متابَع'}</span>
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* نموذج تعديل التفاصيل الشخصية */}
       {editingDetails && (
