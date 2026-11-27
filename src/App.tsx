@@ -1,4 +1,4 @@
-import React, { Component, useEffect, useRef, useState } from 'react';
+import React, { Component, useEffect, useRef, useState, useTransition } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
@@ -133,62 +133,41 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-async function applySessionToProfile(s: Session | null) {
-  if (!s?.user) {
-    deactivateUser();
-    return;
-  }
-
-  const uid = s.user.id;
+function getFallbackIdentity(s: Session) {
   const meta = s.user.user_metadata || {};
-  let fullName =
+  const rawName =
     typeof meta.full_name === 'string'
       ? meta.full_name.trim()
       : typeof meta.name === 'string'
         ? meta.name.trim()
-        : '';
-  let avatarUrl =
+        : s.user.email
+          ? s.user.email.split('@')[0]
+          : 'حساب وِصل';
+
+  const avatarUrl =
     typeof meta.avatar_url === 'string'
       ? meta.avatar_url.trim()
       : typeof meta.avatar === 'string'
         ? meta.avatar.trim()
         : '';
+
   const phoneNum = typeof meta.phone_number === 'string' ? meta.phone_number.trim() : '';
+  const cleanHandle = rawName.toLowerCase().replace(/[^a-z0-9_]/g, '');
 
-  try {
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('full_name, avatar_url')
-      .eq('id', uid)
-      .maybeSingle();
-
-    if (prof?.full_name && typeof prof.full_name === 'string' && prof.full_name.trim()) {
-      fullName = prof.full_name.trim();
-    }
-    if (prof?.avatar_url && typeof prof.avatar_url === 'string' && prof.avatar_url.trim()) {
-      avatarUrl = prof.avatar_url.trim();
-    }
-  } catch {
-    // تجاهل خطأ الجلب
-  }
-
-  if (!fullName && s.user.email) {
-    fullName = s.user.email.split('@')[0];
-  }
-
-  const cleanHandle = fullName ? fullName.toLowerCase().replace(/[^a-z0-9_]/g, '') : '';
-  activateUser(uid, {
-    ...(fullName ? { name: fullName } : {}),
-    ...(cleanHandle ? { username: `@${cleanHandle}` } : {}),
-    ...(avatarUrl ? { avatar: avatarUrl } : {}),
-    ...(phoneNum ? { phone: phoneNum } : {}),
-  });
+  return {
+    uid: s.user.id,
+    name: rawName,
+    username: cleanHandle ? `@${cleanHandle}` : '@user',
+    avatar: avatarUrl || undefined,
+    phone: phoneNum || undefined,
+  };
 }
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
   const [tab, setTab] = useState<Tab>('feed');
+  const [_isPending, startTransition] = useTransition();
   const [composerOpen, setComposerOpen] = useState(false);
   const [activeUserName, setActiveUserName] = useState<string>('');
   const [activeUserAvatar, setActiveUserAvatar] = useState<string>('');
@@ -199,6 +178,12 @@ export default function App() {
   const profile = store.profile || {};
   const createPost = store.createPost;
   const addPost = store.addPost;
+
+  const handleSelectTab = (nextTab: Tab) => {
+    startTransition(() => {
+      setTab(nextTab);
+    });
+  };
 
   const displayName =
     activeUserName ||
@@ -223,7 +208,41 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const themeStripRef = useRef<HTMLDivElement | null>(null);
 
-  const syncSessionState = async (nextSession: Session | null) => {
+  const hydrateProfileInBackground = async (uid: string, baseName: string, baseAvatar?: string) => {
+    try {
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('full_name, avatar_url')
+        .eq('id', uid)
+        .maybeSingle();
+
+      if (activeUidRef.current !== uid) return;
+
+      const resolvedName =
+        prof?.full_name && typeof prof.full_name === 'string' && prof.full_name.trim()
+          ? prof.full_name.trim()
+          : baseName;
+
+      const resolvedAvatar =
+        prof?.avatar_url && typeof prof.avatar_url === 'string' && prof.avatar_url.trim()
+          ? prof.avatar_url.trim()
+          : baseAvatar || '';
+
+      setActiveUserName(resolvedName);
+      setActiveUserAvatar(resolvedAvatar);
+
+      const cleanHandle = resolvedName.toLowerCase().replace(/[^a-z0-9_]/g, '');
+      activateUser(uid, {
+        name: resolvedName,
+        ...(cleanHandle ? { username: `@${cleanHandle}` } : {}),
+        ...(resolvedAvatar ? { avatar: resolvedAvatar } : {}),
+      });
+    } catch {
+      // تجاهل خطأ الجلب في الخلفية
+    }
+  };
+
+  const applySessionFast = (nextSession: Session | null) => {
     const nextUid = nextSession?.user?.id ?? null;
 
     if (!nextSession || !nextUid) {
@@ -235,69 +254,39 @@ export default function App() {
       return;
     }
 
-    if (activeUidRef.current && activeUidRef.current !== nextUid) {
-      setActiveUserName('');
-      setActiveUserAvatar('');
-      deactivateUser();
-    }
+    const identity = getFallbackIdentity(nextSession);
+    const isNewUser = activeUidRef.current !== nextUid;
 
     activeUidRef.current = nextUid;
     setSession(nextSession);
 
-    const meta = nextSession.user.user_metadata || {};
-    let resolvedName =
-      typeof meta.full_name === 'string'
-        ? meta.full_name.trim()
-        : typeof meta.name === 'string'
-          ? meta.name.trim()
-          : '';
-    let resolvedAvatar =
-      typeof meta.avatar_url === 'string'
-        ? meta.avatar_url.trim()
-        : typeof meta.avatar === 'string'
-          ? meta.avatar.trim()
-          : '';
-
-    try {
-      const { data: prof } = await supabase
-        .from('profiles')
-        .select('full_name, avatar_url')
-        .eq('id', nextUid)
-        .maybeSingle();
-
-      if (prof?.full_name && typeof prof.full_name === 'string' && prof.full_name.trim()) {
-        resolvedName = prof.full_name.trim();
-      }
-      if (prof?.avatar_url && typeof prof.avatar_url === 'string' && prof.avatar_url.trim()) {
-        resolvedAvatar = prof.avatar_url.trim();
-      }
-    } catch {
-      // تجاهل
+    if (isNewUser) {
+      setActiveUserName(identity.name);
+      setActiveUserAvatar(identity.avatar || '');
+      activateUser(nextUid, {
+        name: identity.name,
+        username: identity.username,
+        ...(identity.avatar ? { avatar: identity.avatar } : {}),
+        ...(identity.phone ? { phone: identity.phone } : {}),
+      });
     }
 
-    if (!resolvedName && nextSession.user.email) {
-      resolvedName = nextSession.user.email.split('@')[0];
-    }
-
-    setActiveUserName(resolvedName);
-    setActiveUserAvatar(resolvedAvatar);
-    await applySessionToProfile(nextSession);
+    void hydrateProfileInBackground(nextUid, identity.name, identity.avatar);
   };
 
   useEffect(() => {
     let active = true;
 
-    void supabase.auth.getSession().then(async ({ data }) => {
+    void supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
-      await syncSessionState(data.session);
-      if (active) setChecking(false);
+      applySessionFast(data.session);
+      setChecking(false);
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!active) return;
-      void syncSessionState(nextSession).finally(() => {
-        if (active) setChecking(false);
-      });
+      applySessionFast(nextSession);
+      setChecking(false);
     });
 
     return () => {
@@ -307,13 +296,13 @@ export default function App() {
   }, []);
 
   const handleLogoutEverywhere = async () => {
-    await syncSessionState(null);
+    applySessionFast(null);
+    handleSelectTab('feed');
     try {
       await supabase.auth.signOut({ scope: 'local' });
     } catch {
       // تجاهل
     }
-    setTab('feed');
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -328,12 +317,8 @@ export default function App() {
     e.target.value = '';
   };
 
-  const uploadToWaslMedia = async (file: File, fallbackUrl: string): Promise<string> => {
+  const uploadToWaslMedia = async (uid: string, file: File, fallbackUrl: string): Promise<string> => {
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      const uid = authData?.user?.id || session?.user?.id;
-      if (!uid) return fallbackUrl;
-
       const ext = (file.name.split('.').pop() || 'jpg').replace(/[^a-zA-Z0-9]/g, '');
       const filePath = `posts/${uid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext || 'jpg'}`;
 
@@ -369,63 +354,63 @@ export default function App() {
     return main ? `${main}\n${extraLine}` : extraLine;
   };
 
-  const handlePublishFromModal = async () => {
+  const handlePublishFromModal = () => {
     const finalContent = buildFinalContent();
     const rawMedia = imageUrl.trim();
     if ((!finalContent && !rawMedia) || submitting) return;
 
-    setSubmitting(true);
-    try {
-      let finalMediaUrl = rawMedia || undefined;
-      if (selectedFile && rawMedia) {
-        finalMediaUrl = await uploadToWaslMedia(selectedFile, rawMedia);
-      }
+    const fileToUpload = selectedFile;
+    const authorNameSnapshot = displayName;
+    const authorHandleSnapshot = displayHandle;
+    const userIdSnapshot = session?.user?.id ?? activeUidRef.current ?? null;
+    const localId = `post-${Date.now()}`;
 
-      if (createPost) {
-        createPost(finalContent, finalMediaUrl);
-      }
+    if (createPost) {
+      createPost(finalContent, rawMedia || undefined);
+    } else if (addPost) {
+      addPost({
+        id: localId,
+        authorName: authorNameSnapshot,
+        authorHandle: authorHandleSnapshot,
+        content: finalContent,
+        image: rawMedia || undefined,
+        imageUrl: rawMedia || undefined,
+        createdAt: 'الآن',
+      });
+    }
 
-      const { data: authData } = await supabase.auth.getUser();
-      const userId = authData?.user?.id ?? session?.user?.id ?? null;
+    setPostText('');
+    setImageUrl('');
+    setSelectedFile(null);
+    setActiveExtraType(null);
+    setExtraValue('');
+    setSelectedTheme('none');
+    setComposerOpen(false);
+    handleSelectTab('feed');
 
-      const { data: inserted } = await supabase
-        .from('posts')
-        .insert({
-          user_id: userId,
-          author_name: displayName,
-          author_handle: displayHandle,
-          headline: finalMediaUrl ? `نشر ${displayName} صورة` : `نشر ${displayName}`,
+    void (async () => {
+      setSubmitting(true);
+      try {
+        let finalMediaUrl = rawMedia || undefined;
+        if (fileToUpload && rawMedia && userIdSnapshot) {
+          finalMediaUrl = await uploadToWaslMedia(userIdSnapshot, fileToUpload, rawMedia);
+        }
+
+        await supabase.from('posts').insert({
+          user_id: userIdSnapshot,
+          author_name: authorNameSnapshot,
+          author_handle: authorHandleSnapshot,
+          headline: finalMediaUrl ? `نشر ${authorNameSnapshot} صورة` : `نشر ${authorNameSnapshot}`,
           content: finalContent || null,
           image_url: finalMediaUrl || null,
           kind: finalMediaUrl ? 'photo' : 'post',
-        })
-        .select()
-        .single();
-
-      if (!createPost && addPost) {
-        addPost({
-          id: inserted?.id ? `cloud-${String(inserted.id)}` : `post-${Date.now()}`,
-          dbId: inserted?.id ? String(inserted.id) : undefined,
-          authorName: displayName,
-          authorHandle: displayHandle,
-          content: finalContent,
-          image: finalMediaUrl,
-          imageUrl: finalMediaUrl,
-          createdAt: 'الآن',
         });
+      } catch {
+        // تجاهل خطأ المزامنة الخلفية
+      } finally {
+        setSubmitting(false);
       }
-
-      setPostText('');
-      setImageUrl('');
-      setSelectedFile(null);
-      setActiveExtraType(null);
-      setExtraValue('');
-      setSelectedTheme('none');
-      setComposerOpen(false);
-      setTab('feed');
-    } finally {
-      setSubmitting(false);
-    }
+    })();
   };
 
   if (checking) {
@@ -542,19 +527,19 @@ export default function App() {
 
       <WaslHeaderBar
         activeTab={tab as WaslTabKey}
-        onSelectTab={(t) => setTab(t as Tab)}
+        onSelectTab={(t) => handleSelectTab(t as Tab)}
         currentUserName={displayName}
         userAvatar={effectiveAvatar}
         onLogout={() => void handleLogoutEverywhere()}
-        onSelectFriend={(_friend: FriendItem) => setTab('chats')}
+        onSelectFriend={(_friend: FriendItem) => handleSelectTab('chats')}
       />
 
       <main className="mx-auto w-full max-w-2xl flex-1 px-3 py-4">
-        <TabErrorBoundary onReset={() => setTab('feed')}>
+        <TabErrorBoundary onReset={() => handleSelectTab('feed')}>
           {tab === 'feed' && <FeedTab />}
           {tab === 'chats' && <ChatsTab />}
           {tab === 'contacts' && (
-            <FriendsTab onOpenChatWithUser={() => setTab('chats')} />
+            <FriendsTab onOpenChatWithUser={() => handleSelectTab('chats')} />
           )}
           {tab === 'profile' && <ProfileTab />}
         </TabErrorBoundary>
@@ -579,7 +564,7 @@ export default function App() {
 
                 <button
                   type="button"
-                  onClick={() => void handlePublishFromModal()}
+                  onClick={handlePublishFromModal}
                   disabled={!canSubmit}
                   className={`rounded-lg px-3 py-1 text-xs font-bold transition ${
                     canSubmit
@@ -731,7 +716,7 @@ export default function App() {
             <div className="sticky bottom-0 bg-[#1c1d21] p-3 border-t border-white/10">
               <button
                 type="button"
-                onClick={() => void handlePublishFromModal()}
+                onClick={handlePublishFromModal}
                 disabled={!canSubmit}
                 className="w-full rounded-lg bg-[#1877F2] py-2.5 text-sm font-extrabold text-white shadow transition enabled:hover:bg-[#166fe5] enabled:active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45"
               >
