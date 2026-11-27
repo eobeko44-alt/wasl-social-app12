@@ -16,6 +16,7 @@ import {
   Share2,
   Trash2,
   Send,
+  BadgeCheck,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { supabase } from '@/lib/supabase';
@@ -58,6 +59,27 @@ interface PersistedProfileData {
   isPublicAccount: boolean;
   highlights: Array<{ id: string; title: string; image?: string }>;
   posts: ActivityPostItem[];
+}
+
+const VERIFIED_FOUNDER_IDS = new Set<string>([
+  '9925c38d-c91d-47b6-9da2-f9042d4142d4',
+]);
+
+function isVerifiedFounder(userId?: string | null): boolean {
+  if (!userId || typeof userId !== 'string') return false;
+  return VERIFIED_FOUNDER_IDS.has(userId.trim());
+}
+
+function VerifiedBlueBadge({ size = 18 }: { size?: number }) {
+  return (
+    <span
+      title="حساب موثّق رسمياً"
+      aria-label="حساب موثّق رسمياً"
+      className="inline-flex items-center justify-center shrink-0 text-[#1877F2]"
+    >
+      <BadgeCheck size={size} className="fill-[#1877F2] text-white" />
+    </span>
+  );
 }
 
 const STORAGE_PREFIX = 'wasl_p_';
@@ -231,6 +253,8 @@ export default function ProfileTab() {
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const highlightInputRef = useRef<HTMLInputElement | null>(null);
+
+  const isFounderAccount = isVerifiedFounder(currentUid);
 
   const resetLocalViewForNewUser = (fallbackTitle: string) => {
     setDisplayName(fallbackTitle);
@@ -871,7 +895,10 @@ export default function ProfileTab() {
           </div>
 
           <div className="space-y-1">
-            <h1 className="text-xl font-black text-white">{displayName}</h1>
+            <h1 className="flex items-center gap-1.5 text-xl font-black text-white">
+              <span>{displayName}</span>
+              {isFounderAccount && <VerifiedBlueBadge size={19} />}
+            </h1>
             <p className="pt-0.5 text-xs leading-relaxed text-slate-300">{bio}</p>
           </div>
 
@@ -1245,7 +1272,10 @@ export default function ProfileTab() {
                         </div>
                       )}
                       <div className="min-w-0">
-                        <p className="text-xs font-bold text-white truncate">{post.headline}</p>
+                        <p className="flex items-center gap-1 text-xs font-bold text-white">
+                          <span className="truncate">{post.headline}</span>
+                          {isFounderAccount && <VerifiedBlueBadge size={14} />}
+                        </p>
                         <p className="text-[10px] text-slate-400">{post.createdAt}</p>
                       </div>
                     </div>
@@ -1337,7 +1367,12 @@ export default function ProfileTab() {
                               className="rounded-xl bg-slate-950/80 border border-slate-800/80 px-3 py-2 text-xs"
                             >
                               <div className="flex items-center justify-between">
-                                <span className="font-bold text-cyan-300">{cmt.author}</span>
+                                <span className="inline-flex items-center gap-1 font-bold text-cyan-300">
+                                  <span>{cmt.author}</span>
+                                  {isFounderAccount && cmt.author === displayName && (
+                                    <VerifiedBlueBadge size={12} />
+                                  )}
+                                </span>
                                 <span className="text-[10px] text-slate-500">{cmt.createdAt}</span>
                               </div>
                               <p className="mt-1 text-slate-200">{cmt.text}</p>
