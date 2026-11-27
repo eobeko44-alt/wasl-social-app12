@@ -3,6 +3,13 @@ import { Heart, MessageCircle, Share2, Trash2, Send, RefreshCw } from 'lucide-re
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/store/useAppStore';
 
+interface PostCommentItem {
+  id: string;
+  author: string;
+  text: string;
+  createdAt: string;
+}
+
 interface FeedPostItem {
   id: string;
   dbId?: string;
@@ -16,7 +23,7 @@ interface FeedPostItem {
   createdAt: string;
   likesCount: number;
   likedByMe: boolean;
-  comments: { id: string; author: string; text: string; createdAt: string }[];
+  comments: PostCommentItem[];
 }
 
 let cachedFeedPosts: FeedPostItem[] | null = null;
@@ -35,6 +42,37 @@ function formatRelativeTime(iso?: string): string {
   if (diffHr < 24) return `منذ ${diffHr} س`;
   const diffDay = Math.floor(diffHr / 24);
   return `منذ ${diffDay} ي`;
+}
+
+function sanitizeComments(rawComments: unknown): PostCommentItem[] {
+  if (!Array.isArray(rawComments)) return [];
+  return rawComments
+    .filter((c): c is Record<string, unknown> => Boolean(c && typeof c === 'object'))
+    .map((c, idx) => {
+      const authorVal =
+        typeof c.author === 'string' && c.author.trim()
+          ? c.author.trim()
+          : typeof c.authorName === 'string' && c.authorName.trim()
+            ? c.authorName.trim()
+            : 'مستخدم وِصل';
+      const textVal =
+        typeof c.text === 'string'
+          ? c.text
+          : typeof c.content === 'string'
+            ? c.content
+            : '';
+      const timeVal =
+        typeof c.createdAt === 'string' && c.createdAt.trim()
+          ? c.createdAt.trim()
+          : 'الآن';
+      return {
+        id: typeof c.id === 'string' && c.id ? c.id : `cmt-${idx}-${Date.now()}`,
+        author: authorVal,
+        text: textVal,
+        createdAt: timeVal,
+      };
+    })
+    .filter((c) => c.text.trim().length > 0);
 }
 
 function normalizeRow(row: any, currentUid: string | null): FeedPostItem {
@@ -67,15 +105,15 @@ function normalizeRow(row: any, currentUid: string | null): FeedPostItem {
     createdAt: formatRelativeTime(row?.created_at),
     likesCount: typeof row?.likes_count === 'number' ? row.likes_count : 0,
     likedByMe: Boolean(currentUid && Array.isArray(row?.liked_by) && row.liked_by.includes(currentUid)),
-    comments: Array.isArray(row?.comments) ? row.comments : [],
+    comments: sanitizeComments(row?.comments),
   };
 }
 
 export default function FeedTab() {
   const store = useAppStore();
-  const storePosts = useMemo(() => (Array.isArray(store.posts) ? store.posts : []), [store.posts]);
+  const storePosts = useMemo(() => (Array.isArray(store?.posts) ? store.posts : []), [store?.posts]);
   const currentUserName =
-    (typeof store.profile?.name === 'string' && store.profile.name.trim()) || 'حساب وِصل';
+    (typeof store?.profile?.name === 'string' && store.profile.name.trim()) || 'حساب وِصل';
 
   const [posts, setPosts] = useState<FeedPostItem[]>(() => cachedFeedPosts || []);
   const [loading, setLoading] = useState<boolean>(() => !cachedFeedPosts);
@@ -143,31 +181,33 @@ export default function FeedTab() {
 
   // دمج منشورات المتجر المحلية الجديدة فوراً مع منشورات السحابة بدون تكرار
   const mergedPosts = useMemo(() => {
-    const localMapped: FeedPostItem[] = storePosts.map((p: any, idx: number) => ({
-      id: String(p?.id || `local-${idx}`),
-      dbId: p?.dbId ? String(p.dbId) : undefined,
-      userId: p?.userId ? String(p.userId) : currentUid,
-      authorName:
-        (typeof p?.authorName === 'string' && p.authorName.trim()) || currentUserName,
-      authorHandle:
-        typeof p?.authorHandle === 'string' && p.authorHandle.trim()
-          ? p.authorHandle.trim()
-          : undefined,
-      authorAvatar:
-        typeof p?.authorAvatar === 'string' && p.authorAvatar.trim()
-          ? p.authorAvatar.trim()
-          : undefined,
-      headline: typeof p?.headline === 'string' ? p.headline : undefined,
-      content: typeof p?.content === 'string' ? p.content : '',
-      imageUrl:
-        (typeof p?.imageUrl === 'string' && p.imageUrl.trim()) ||
-        (typeof p?.image === 'string' && p.image.trim()) ||
-        undefined,
-      createdAt: typeof p?.createdAt === 'string' && p.createdAt ? p.createdAt : 'الآن',
-      likesCount: typeof p?.likesCount === 'number' ? p.likesCount : 0,
-      likedByMe: Boolean(p?.likedByMe),
-      comments: Array.isArray(p?.comments) ? p.comments : [],
-    }));
+    const localMapped: FeedPostItem[] = storePosts
+      .filter((p): p is Record<string, any> => Boolean(p && typeof p === 'object'))
+      .map((p, idx) => ({
+        id: String(p?.id || `local-${idx}`),
+        dbId: p?.dbId ? String(p.dbId) : undefined,
+        userId: p?.userId ? String(p.userId) : currentUid,
+        authorName:
+          (typeof p?.authorName === 'string' && p.authorName.trim()) || currentUserName,
+        authorHandle:
+          typeof p?.authorHandle === 'string' && p.authorHandle.trim()
+            ? p.authorHandle.trim()
+            : undefined,
+        authorAvatar:
+          typeof p?.authorAvatar === 'string' && p.authorAvatar.trim()
+            ? p.authorAvatar.trim()
+            : undefined,
+        headline: typeof p?.headline === 'string' ? p.headline : undefined,
+        content: typeof p?.content === 'string' ? p.content : '',
+        imageUrl:
+          (typeof p?.imageUrl === 'string' && p.imageUrl.trim()) ||
+          (typeof p?.image === 'string' && p.image.trim()) ||
+          undefined,
+        createdAt: typeof p?.createdAt === 'string' && p.createdAt ? p.createdAt : 'الآن',
+        likesCount: typeof p?.likesCount === 'number' ? p.likesCount : 0,
+        likedByMe: Boolean(p?.likedByMe),
+        comments: sanitizeComments(p?.comments),
+      }));
 
     const seenContentAndImg = new Set<string>();
     const combined: FeedPostItem[] = [];
@@ -191,10 +231,36 @@ export default function FeedTab() {
     return combined;
   }, [storePosts, posts, currentUid, currentUserName]);
 
-  const handleToggleLike = (postId: string) => {
+  const sendPostNotification = async (
+    targetPost: FeedPostItem,
+    type: 'like' | 'comment',
+    previewText?: string
+  ) => {
+    if (!targetPost.userId || !currentUid || targetPost.userId === currentUid) return;
+    try {
+      await supabase.from('notifications').insert({
+        user_id: targetPost.userId,
+        sender_id: currentUid,
+        actor_name: currentUserName,
+        type,
+        message:
+          type === 'like'
+            ? 'أعجب بمنشورك'
+            : 'علّق على منشورك',
+        preview_text: previewText || targetPost.content.slice(0, 60) || null,
+        is_read: false,
+      });
+    } catch {
+      // تجاهل خطأ الإشعار
+    }
+  };
+
+  const handleToggleLike = (item: FeedPostItem) => {
+    const willLike = !item.likedByMe;
+
     const updater = (list: FeedPostItem[]) =>
       list.map((p) => {
-        if (p.id !== postId) return p;
+        if (p.id !== item.id) return p;
         const nextLiked = !p.likedByMe;
         const nextCount = Math.max(0, p.likesCount + (nextLiked ? 1 : -1));
         return { ...p, likedByMe: nextLiked, likesCount: nextCount };
@@ -204,14 +270,18 @@ export default function FeedTab() {
     if (cachedFeedPosts) {
       cachedFeedPosts = updater(cachedFeedPosts);
     }
+
+    if (willLike) {
+      void sendPostNotification(item, 'like');
+    }
   };
 
-  const handleAddComment = (postId: string, e: React.FormEvent) => {
+  const handleAddComment = (item: FeedPostItem, e: React.FormEvent) => {
     e.preventDefault();
-    const text = (commentDrafts[postId] || '').trim();
+    const text = (commentDrafts[item.id] || '').trim();
     if (!text) return;
 
-    const newComment = {
+    const newComment: PostCommentItem = {
       id: `cmt-${Date.now()}`,
       author: currentUserName,
       text,
@@ -220,14 +290,15 @@ export default function FeedTab() {
 
     const updater = (list: FeedPostItem[]) =>
       list.map((p) =>
-        p.id === postId ? { ...p, comments: [...p.comments, newComment] } : p
+        p.id === item.id ? { ...p, comments: [...p.comments, newComment] } : p
       );
 
     setPosts(updater);
     if (cachedFeedPosts) {
       cachedFeedPosts = updater(cachedFeedPosts);
     }
-    setCommentDrafts((prev) => ({ ...prev, [postId]: '' }));
+    setCommentDrafts((prev) => ({ ...prev, [item.id]: '' }));
+    void sendPostNotification(item, 'comment', text);
   };
 
   const handleSharePost = async (item: FeedPostItem) => {
@@ -316,6 +387,7 @@ export default function FeedTab() {
               item.id.startsWith('local-')
           );
           const isCommentsOpen = openCommentsId === item.id;
+          const safeComments = Array.isArray(item.comments) ? item.comments : [];
 
           return (
             <article
@@ -378,13 +450,13 @@ export default function FeedTab() {
 
               <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 text-[11px] text-slate-400">
                 <span>{item.likesCount > 0 ? `${item.likesCount} إعجاب` : ''}</span>
-                <span>{item.comments.length > 0 ? `${item.comments.length} تعليق` : ''}</span>
+                <span>{safeComments.length > 0 ? `${safeComments.length} تعليق` : ''}</span>
               </div>
 
               <div className="grid grid-cols-3 gap-1 border-t border-slate-800/80 pt-1.5">
                 <button
                   type="button"
-                  onClick={() => handleToggleLike(item.id)}
+                  onClick={() => handleToggleLike(item)}
                   className={`flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-bold transition ${
                     item.likedByMe
                       ? 'bg-rose-500/15 text-rose-400'
@@ -400,7 +472,11 @@ export default function FeedTab() {
                   onClick={() =>
                     setOpenCommentsId((prev) => (prev === item.id ? null : item.id))
                   }
-                  className="flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-bold text-slate-300 hover:bg-white/5 transition"
+                  className={`flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-bold transition ${
+                    isCommentsOpen
+                      ? 'bg-cyan-500/15 text-cyan-300'
+                      : 'text-slate-300 hover:bg-white/5'
+                  }`}
                 >
                   <MessageCircle size={15} />
                   <span>تعليق</span>
@@ -418,7 +494,7 @@ export default function FeedTab() {
 
               {isCommentsOpen && (
                 <div className="space-y-2 border-t border-slate-800/80 pt-2.5">
-                  {item.comments.map((c) => (
+                  {safeComments.map((c) => (
                     <div
                       key={c.id}
                       className="rounded-xl bg-slate-950/80 border border-slate-800/70 px-3 py-2 text-xs"
@@ -432,7 +508,7 @@ export default function FeedTab() {
                   ))}
 
                   <form
-                    onSubmit={(e) => handleAddComment(item.id, e)}
+                    onSubmit={(e) => handleAddComment(item, e)}
                     className="flex items-center gap-2"
                   >
                     <input
