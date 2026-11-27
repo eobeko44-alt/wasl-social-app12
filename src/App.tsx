@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Component, useEffect, useRef, useState } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
   ArrowRight,
@@ -19,12 +20,53 @@ import { WaslHeaderBar, WaslTabKey, FriendItem } from '@/components/WaslHeaderBa
 import { activateUser, deactivateUser, useAppStore } from '@/store/useAppStore';
 import FeedTab from '@/components/feed/FeedTab';
 import ChatsTab from '@/components/chats/ChatsTab';
-import ContactsTab from '@/components/contacts/ContactsTab';
+import { FriendsTab } from '@/components/FriendsTab';
 import ProfileTab from '@/components/profile/ProfileTab';
 
 type Tab = 'feed' | 'chats' | 'contacts' | 'profile';
 
 const MEDIA_BUCKET = 'wasl-media';
+
+class TabErrorBoundary extends Component<
+  { children: ReactNode; onReset?: () => void },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode; onReset?: () => void }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(_error: Error, _info: ErrorInfo) {
+    // تجاهل لتفادي تعليق التطبيق
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-2xl border border-rose-500/30 bg-rose-950/30 p-5 text-center space-y-3">
+          <p className="text-xs font-bold text-rose-200">
+            تعذر عرض هذا القسم مؤقتاً.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              this.setState({ hasError: false });
+              this.props.onReset?.();
+            }}
+            className="rounded-xl bg-[#1877F2] px-4 py-2 text-xs font-extrabold text-white hover:bg-[#166fe5] transition"
+          >
+            إعادة المحاولة
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const BG_THEMES = [
   { id: 'none', label: 'افتراضي', className: 'bg-transparent text-white' },
@@ -89,10 +131,6 @@ function readFileAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => resolve('');
     reader.readAsDataURL(file);
   });
-}
-
-function clearStoreForAccountSwitch() {
-  deactivateUser();
 }
 
 async function applySessionToProfile(s: Session | null) {
@@ -512,10 +550,14 @@ export default function App() {
       />
 
       <main className="mx-auto w-full max-w-2xl flex-1 px-3 py-4">
-        {tab === 'feed' && <FeedTab />}
-        {tab === 'chats' && <ChatsTab />}
-        {tab === 'contacts' && <ContactsTab />}
-        {tab === 'profile' && <ProfileTab />}
+        <TabErrorBoundary onReset={() => setTab('feed')}>
+          {tab === 'feed' && <FeedTab />}
+          {tab === 'chats' && <ChatsTab />}
+          {tab === 'contacts' && (
+            <FriendsTab onOpenChatWithUser={() => setTab('chats')} />
+          )}
+          {tab === 'profile' && <ProfileTab />}
+        </TabErrorBoundary>
       </main>
 
       {composerOpen && (
