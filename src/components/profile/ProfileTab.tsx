@@ -2109,8 +2109,7 @@ export default function ProfileTab() {
                           className="h-10 w-10 text-slate-400 translate-y-1"
                         >
                           <path d="M12 12c2.761 0 5-2.239 5-5s-2.239-5-5-5-5 2.239-5 5 2.239 5 5 5zm0 2.5c-4.418 0-8 2.239-8 5v1.5c0 .552.448 1 1 1h14c.552 0 1-.448 1-1v-1.5c0-2.761-3.582-5-8-5z" />
-                        </svg
-                          </svg>
+                        </svg>
                       </div>
                     )}
                     <p className="truncate text-[11px] font-bold text-white">{fName}</p>
