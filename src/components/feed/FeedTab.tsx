@@ -112,8 +112,8 @@ export default function FeedTab() {
   const displayName =
     currentProfile.name && currentProfile.name !== 'أنت'
       ? String(currentProfile.name)
-      : 'abobaker096605';
-  const rawHandle = currentProfile.username || '@abobaker096605';
+      : 'مستخدم وِصل';
+  const rawHandle = currentProfile.username || '@wasl_user';
   const displayHandle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
 
   const [cloudPosts, setCloudPosts] = useState<Array<Record<string, any>>>([]);
@@ -205,7 +205,21 @@ export default function FeedTab() {
       )
       .subscribe();
 
+    const { data: authSub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user) {
+        setComposerOpen(false);
+        setPostText('');
+        setSelectedImageFile(null);
+        setImagePreview('');
+        setActiveExtraType(null);
+        setExtraValue('');
+      } else {
+        void fetchGlobalPosts();
+      }
+    });
+
     return () => {
+      authSub.subscription.unsubscribe();
       void supabase.removeChannel(channel);
     };
   }, []);
@@ -224,7 +238,8 @@ export default function FeedTab() {
   const uploadPostMedia = async (file: File, fallbackUrl: string): Promise<string> => {
     try {
       const { data: userData } = await supabase.auth.getUser();
-      const uid = userData?.user?.id || 'guest';
+      const uid = userData?.user?.id;
+      if (!uid) return fallbackUrl;
       const ext = (file.name.split('.').pop() || 'jpg').replace(/[^a-zA-Z0-9]/g, '');
       const path = `feed/${uid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext || 'jpg'}`;
 
