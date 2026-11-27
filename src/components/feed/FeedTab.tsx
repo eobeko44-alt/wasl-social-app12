@@ -22,6 +22,9 @@ import {
   Link2,
   PlusCircle,
   MinusCircle,
+  UserPlus,
+  Check,
+  MapPin,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/store/useAppStore';
@@ -44,6 +47,78 @@ export function VerifiedBlueBadge({ size = 15 }: { size?: number }) {
     >
       <BadgeCheck size={size} className="fill-[#1877F2] text-white" />
     </span>
+  );
+}
+
+function DefaultAvatar({
+  src,
+  alt = 'صورة الملف الشخصي',
+  sizeClass = 'h-10 w-10',
+  iconSizeClass = 'h-7 w-7',
+  className = '',
+}: {
+  src?: string | null;
+  alt?: string;
+  sizeClass?: string;
+  iconSizeClass?: string;
+  className?: string;
+}) {
+  const cleanSrc = typeof src === 'string' ? src.trim() : '';
+
+  if (cleanSrc) {
+    return (
+      <img
+        src={cleanSrc}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        className={`${sizeClass} shrink-0 rounded-full object-cover border border-cyan-500/25 ${className}`}
+      />
+    );
+  }
+
+  return (
+    <div
+      role="img"
+      aria-label={alt}
+      className={`${sizeClass} shrink-0 rounded-full bg-slate-800/95 border border-purple-500/25 flex items-center justify-center overflow-hidden select-none shadow-inner ${className}`}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        aria-hidden="true"
+        className={`${iconSizeClass} text-slate-400 translate-y-1`}
+      >
+        <path d="M12 12c2.761 0 5-2.239 5-5s-2.239-5-5-5-5 2.239-5 5 2.239 5 5 5zm0 2.5c-4.418 0-8 2.239-8 5v1.5c0 .552.448 1 1 1h14c.552 0 1-.448 1-1v-1.5c0-2.761-3.582-5-8-5z" />
+      </svg>
+    </div>
+  );
+}
+
+function PostAuthorAvatar({
+  src,
+  name,
+  onClick,
+}: {
+  src?: string | null;
+  name: string;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`فتح ملف ${name} الشخصي`}
+      title={`فتح ملف ${name} الشخصي`}
+      className="shrink-0 rounded-full focus:outline-none focus:ring-2 focus:ring-cyan-400/60 active:scale-95 transition"
+    >
+      <DefaultAvatar
+        src={src}
+        alt={name}
+        sizeClass="h-10 w-10"
+        iconSizeClass="h-7 w-7"
+      />
+    </button>
   );
 }
 
@@ -89,6 +164,26 @@ interface FeedPostItem {
   saved?: boolean;
   mutedNotifications?: boolean;
   reported?: boolean;
+}
+
+interface SelectedUserProfile {
+  userId?: string | null;
+  name: string;
+  handle?: string;
+  avatar?: string;
+  cover?: string;
+  bio?: string;
+  city?: string;
+  posts: FeedPostItem[];
+}
+
+interface FeedTabProps {
+  onOpenUserProfile?: (user: {
+    userId?: string | null;
+    name: string;
+    avatar?: string;
+    handle?: string;
+  }) => void;
 }
 
 let cachedFeedPosts: FeedPostItem[] | null = null;
@@ -212,7 +307,7 @@ function normalizeRow(row: any, currentUid: string | null): FeedPostItem {
   };
 }
 
-export default function FeedTab() {
+export default function FeedTab({ onOpenUserProfile }: FeedTabProps = {}) {
   const store = useAppStore();
   const storePosts = useMemo(
     () => (Array.isArray(store?.posts) ? store.posts : []),
@@ -241,6 +336,11 @@ export default function FeedTab() {
   // حالة قائمة الثلاث نقاط وشاشة "خيارات إضافية"
   const [menuPostId, setMenuPostId] = useState<string | null>(null);
   const [showExtraOptions, setShowExtraOptions] = useState(false);
+
+  // حالة عرض ملف الشخص عند الضغط على صورته
+  const [selectedUserProfile, setSelectedUserProfile] = useState<SelectedUserProfile | null>(null);
+  const [profileSubTab, setProfileSubTab] = useState<'all' | 'photos' | 'about'>('all');
+  const [isFollowingTargetUser, setIsFollowingTargetUser] = useState(false);
 
   const commentInputRef = useRef<HTMLInputElement | null>(null);
   const mountedRef = useRef(true);
@@ -360,6 +460,93 @@ export default function FeedTab() {
 
     return combined;
   }, [storePosts, posts, currentUid, currentUserName]);
+
+  const handleOpenAuthorProfile = async (item: FeedPostItem) => {
+    const userPosts = mergedPosts.filter(
+      (p) =>
+        (item.userId && p.userId && p.userId === item.userId) ||
+        p.authorName === item.authorName
+    );
+
+    if (onOpenUserProfile) {
+      onOpenUserProfile({
+        userId: item.userId,
+        name: item.authorName,
+        handle: item.authorHandle,
+        avatar: item.authorAvatar,
+      });
+    }
+
+    try {
+      window.dispatchEvent(
+        new CustomEvent('wasl:open-user-profile', {
+          detail: {
+            userId: item.userId,
+            name: item.authorName,
+            handle: item.authorHandle,
+            avatar: item.authorAvatar,
+          },
+        })
+      );
+    } catch {
+      // تجاهل
+    }
+
+    setProfileSubTab('all');
+    setIsFollowingTargetUser(false);
+    setSelectedUserProfile({
+      userId: item.userId,
+      name: item.authorName,
+      handle: item.authorHandle,
+      avatar: item.authorAvatar,
+      cover: undefined,
+      bio: 'عضو في مجتمع وِصل.',
+      city: undefined,
+      posts: userPosts.length > 0 ? userPosts : [item],
+    });
+
+    if (item.userId) {
+      try {
+        const { data: remoteProfile } = await supabase
+          .from('profiles')
+          .select('full_name, avatar_url, cover_url, bio, city')
+          .eq('id', item.userId)
+          .maybeSingle();
+
+        if (remoteProfile && mountedRef.current) {
+          setSelectedUserProfile((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  name:
+                    typeof remoteProfile.full_name === 'string' && remoteProfile.full_name.trim()
+                      ? remoteProfile.full_name.trim()
+                      : prev.name,
+                  avatar:
+                    typeof remoteProfile.avatar_url === 'string' && remoteProfile.avatar_url.trim()
+                      ? remoteProfile.avatar_url.trim()
+                      : prev.avatar,
+                  cover:
+                    typeof remoteProfile.cover_url === 'string' && remoteProfile.cover_url.trim()
+                      ? remoteProfile.cover_url.trim()
+                      : prev.cover,
+                  bio:
+                    typeof remoteProfile.bio === 'string' && remoteProfile.bio.trim()
+                      ? remoteProfile.bio.trim()
+                      : prev.bio,
+                  city:
+                    typeof remoteProfile.city === 'string' && remoteProfile.city.trim()
+                      ? remoteProfile.city.trim()
+                      : prev.city,
+                }
+              : null
+          );
+        }
+      } catch {
+        // تجاهل
+      }
+    }
+  };
 
   const activePost = useMemo(
     () => mergedPosts.find((p) => p.id === activeSheetPostId) || null,
@@ -588,6 +775,11 @@ export default function FeedTab() {
     return list;
   }, [activePost, sortMode]);
 
+  const profilePhotos = useMemo(
+    () => (selectedUserProfile?.posts || []).filter((p) => Boolean(p.imageUrl)),
+    [selectedUserProfile]
+  );
+
   return (
     <div dir="rtl" className="space-y-3 pb-8">
       <div className="flex items-center justify-between px-1">
@@ -649,24 +841,20 @@ export default function FeedTab() {
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  {item.authorAvatar ? (
-                    <img
-                      src={item.authorAvatar}
-                      alt={item.authorName}
-                      loading="lazy"
-                      decoding="async"
-                      className="h-10 w-10 shrink-0 rounded-full object-cover border border-cyan-500/25"
-                    />
-                  ) : (
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 border border-purple-500/25 text-sm font-black text-cyan-300">
-                      {item.authorName.slice(0, 1)}
-                    </div>
-                  )}
+                  <PostAuthorAvatar
+                    src={item.authorAvatar}
+                    name={item.authorName}
+                    onClick={() => void handleOpenAuthorProfile(item)}
+                  />
                   <div className="min-w-0">
-                    <p className="flex items-center gap-1 text-xs font-extrabold text-white">
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenAuthorProfile(item)}
+                      className="flex items-center gap-1 text-xs font-extrabold text-white hover:text-cyan-300 transition text-right"
+                    >
                       <span className="truncate">{item.authorName}</span>
                       {authorVerified && <VerifiedBlueBadge size={15} />}
-                    </p>
+                    </button>
                     <p className="text-[10px] text-slate-400">
                       {item.authorHandle ? `${item.authorHandle} · ` : ''}
                       {item.createdAt}
@@ -751,6 +939,223 @@ export default function FeedTab() {
             </article>
           );
         })
+      )}
+
+      {/* شاشة ملف الشخص عند الضغط على صورته */}
+      {selectedUserProfile && (
+        <div
+          dir="rtl"
+          className="fixed inset-0 z-50 flex flex-col bg-slate-950 text-slate-100 overflow-y-auto"
+        >
+          <div className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-800 bg-slate-900/95 px-3 py-2.5 backdrop-blur">
+            <button
+              type="button"
+              onClick={() => setSelectedUserProfile(null)}
+              aria-label="رجوع"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-white hover:bg-slate-700"
+            >
+              <ChevronLeft size={20} className="rotate-180" />
+            </button>
+
+            <div className="flex items-center gap-1 min-w-0">
+              <h2 className="truncate text-sm font-black text-white">
+                {selectedUserProfile.name}
+              </h2>
+              {isVerifiedFounderId(selectedUserProfile.userId) && (
+                <VerifiedBlueBadge size={15} />
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSelectedUserProfile(null)}
+              aria-label="إغلاق"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-slate-300 hover:text-white"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="mx-auto w-full max-w-2xl pb-10 space-y-3">
+            <div className="overflow-hidden border-b border-slate-800 bg-slate-900">
+              <div className="h-40 w-full bg-gradient-to-l from-purple-700/60 via-slate-800 to-cyan-600/50">
+                {selectedUserProfile.cover && (
+                  <img
+                    src={selectedUserProfile.cover}
+                    alt="غلاف الحساب"
+                    className="h-full w-full object-cover"
+                  />
+                )}
+              </div>
+
+              <div className="px-4 pb-4">
+                <div className="-mt-12 mb-2.5 flex items-end justify-between">
+                  <DefaultAvatar
+                    src={selectedUserProfile.avatar}
+                    alt={selectedUserProfile.name}
+                    sizeClass="h-24 w-24"
+                    iconSizeClass="h-16 w-16"
+                    className="border-4 border-slate-900 shadow-lg"
+                  />
+                </div>
+
+                <h1 className="flex items-center gap-1.5 text-lg font-black text-white">
+                  <span>{selectedUserProfile.name}</span>
+                  {isVerifiedFounderId(selectedUserProfile.userId) && (
+                    <VerifiedBlueBadge size={18} />
+                  )}
+                </h1>
+
+                <p className="mt-1 text-xs text-slate-300">
+                  <strong className="text-white">{selectedUserProfile.posts.length}</strong>{' '}
+                  منشورات ·{' '}
+                  <strong className="text-white">
+                    {isFollowingTargetUser ? '1' : '0'}
+                  </strong>{' '}
+                  يتابع
+                </p>
+
+                {selectedUserProfile.bio && (
+                  <p className="mt-2 text-xs leading-relaxed text-slate-300">
+                    {selectedUserProfile.bio}
+                  </p>
+                )}
+
+                {selectedUserProfile.city && (
+                  <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-400">
+                    <MapPin size={14} className="text-cyan-400" />
+                    <span>{selectedUserProfile.city}</span>
+                  </div>
+                )}
+
+                <div className="mt-3.5 grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsFollowingTargetUser((prev) => !prev);
+                      showNotice(
+                        !isFollowingTargetUser
+                          ? `تمت متابعة ${selectedUserProfile.name}`
+                          : `تم إلغاء متابعة ${selectedUserProfile.name}`
+                      );
+                    }}
+                    className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-bold transition ${
+                      isFollowingTargetUser
+                        ? 'bg-slate-800 text-cyan-300 border border-cyan-500/35'
+                        : 'bg-gradient-to-l from-cyan-600 to-purple-600 text-white'
+                    }`}
+                  >
+                    {isFollowingTargetUser ? <Check size={15} /> : <UserPlus size={15} />}
+                    <span>{isFollowingTargetUser ? 'متابَع' : 'إضافة صديق'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedUserProfile(null);
+                      showNotice(`تم فتح المراسلة مع ${selectedUserProfile.name}`);
+                    }}
+                    className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 bg-slate-950/80 py-2.5 text-xs font-bold text-slate-200 hover:border-cyan-500/40"
+                  >
+                    <MessageCircle size={15} className="text-cyan-400" />
+                    <span>مراسلة</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 border-t border-slate-800 bg-slate-950/60">
+                {(
+                  [
+                    { id: 'all', label: 'الكل' },
+                    { id: 'photos', label: 'الصور' },
+                    { id: 'about', label: 'التفاصيل' },
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setProfileSubTab(tab.id)}
+                    className={`relative py-2.5 text-xs font-bold ${
+                      profileSubTab === tab.id ? 'text-cyan-300' : 'text-slate-400'
+                    }`}
+                  >
+                    {tab.label}
+                    {profileSubTab === tab.id && (
+                      <span className="absolute bottom-0 inset-x-4 h-0.5 rounded-full bg-gradient-to-l from-cyan-400 to-purple-500" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {profileSubTab === 'about' && (
+              <div className="mx-3 rounded-2xl border border-slate-800 bg-slate-900/80 p-4 space-y-2 text-xs text-slate-300">
+                <h3 className="text-sm font-black text-white">التفاصيل الشخصية</h3>
+                <p>{selectedUserProfile.bio || 'لا توجد نبذة مضافة.'}</p>
+                {selectedUserProfile.city && <p>الموقع: {selectedUserProfile.city}</p>}
+              </div>
+            )}
+
+            {profileSubTab === 'photos' && (
+              <div className="mx-3 rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+                {profilePhotos.length === 0 ? (
+                  <p className="py-6 text-center text-xs text-slate-400">
+                    لا توجد صور منشورة لهذا الحساب.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2">
+                    {profilePhotos.map((p) => (
+                      <img
+                        key={p.id}
+                        src={p.imageUrl}
+                        alt={selectedUserProfile.name}
+                        className="h-28 w-full rounded-xl object-cover border border-slate-800"
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {profileSubTab === 'all' && (
+              <div className="px-3 space-y-3">
+                {selectedUserProfile.posts.map((p) => (
+                  <article
+                    key={p.id}
+                    className="rounded-2xl border border-slate-800 bg-slate-900/85 p-3.5 space-y-2.5"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <DefaultAvatar
+                        src={selectedUserProfile.avatar}
+                        alt={selectedUserProfile.name}
+                        sizeClass="h-9 w-9"
+                        iconSizeClass="h-6 w-6"
+                      />
+                      <div>
+                        <p className="text-xs font-extrabold text-white">
+                          {selectedUserProfile.name}
+                        </p>
+                        <p className="text-[10px] text-slate-400">{p.createdAt}</p>
+                      </div>
+                    </div>
+                    {p.content && (
+                      <p className="text-xs leading-relaxed text-slate-100 whitespace-pre-line">
+                        {p.content}
+                      </p>
+                    )}
+                    {p.imageUrl && (
+                      <img
+                        src={p.imageUrl}
+                        alt="منشور"
+                        className="max-h-80 w-full rounded-xl object-cover border border-slate-800"
+                      />
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* القائمة السفلية للمنشور مطابقة للصور (مهتم / غير مهتم / حفظ المنشور / الإبلاغ عن المنشور / خيارات إضافية) */}
@@ -1049,19 +1454,13 @@ export default function FeedTab() {
                   return (
                     <div key={cmt.id} className="space-y-2">
                       <div className="flex items-start gap-2.5">
-                        {cmt.avatar ? (
-                          <img
-                            src={cmt.avatar}
-                            alt={cmt.author}
-                            loading="lazy"
-                            decoding="async"
-                            className="h-9 w-9 shrink-0 rounded-full object-cover border border-white/15 mt-0.5"
-                          />
-                        ) : (
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cyan-600/35 to-purple-600/35 border border-white/15 text-xs font-black text-cyan-200 mt-0.5">
-                            {cmt.author.slice(0, 1)}
-                          </div>
-                        )}
+                        <DefaultAvatar
+                          src={cmt.avatar}
+                          alt={cmt.author}
+                          sizeClass="h-9 w-9"
+                          iconSizeClass="h-6 w-6"
+                          className="mt-0.5"
+                        />
 
                         <div className="flex-1 min-w-0">
                           <div className="relative inline-block max-w-full rounded-2xl bg-[#2a2b2e] px-3.5 py-2">
@@ -1129,9 +1528,13 @@ export default function FeedTab() {
                                 const replyVerified = isVerifiedFounderId(rep.authorId);
                                 return (
                                   <div key={rep.id} className="flex items-start gap-2">
-                                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-800 border border-white/10 text-[11px] font-black text-cyan-300 mt-0.5">
-                                      {rep.author.slice(0, 1)}
-                                    </div>
+                                    <DefaultAvatar
+                                      src={rep.avatar}
+                                      alt={rep.author}
+                                      sizeClass="h-7 w-7"
+                                      iconSizeClass="h-5 w-5"
+                                      className="mt-0.5"
+                                    />
                                     <div className="flex-1 min-w-0">
                                       <div className="inline-block max-w-full rounded-2xl bg-[#2a2b2e] px-3 py-1.5">
                                         <p className="flex items-center gap-1 text-[11px] font-extrabold text-white">
