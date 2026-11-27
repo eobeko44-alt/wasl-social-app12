@@ -1,13 +1,41 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Heart, MessageCircle, Share2, Trash2, Send, RefreshCw } from 'lucide-react';
+import {
+  Heart,
+  MessageCircle,
+  Share2,
+  Trash2,
+  Send,
+  RefreshCw,
+  X,
+  ThumbsUp,
+  CornerDownLeft,
+  Image as ImageIcon,
+  Smile,
+  ChevronDown,
+} from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/store/useAppStore';
+
+interface CommentReplyItem {
+  id: string;
+  author: string;
+  avatar?: string;
+  text: string;
+  createdAt: string;
+  likesCount: number;
+  likedByMe: boolean;
+}
 
 interface PostCommentItem {
   id: string;
   author: string;
+  avatar?: string;
   text: string;
   createdAt: string;
+  likesCount: number;
+  likedByMe: boolean;
+  reactionEmoji?: string;
+  replies: CommentReplyItem[];
 }
 
 interface FeedPostItem {
@@ -30,6 +58,8 @@ let cachedFeedPosts: FeedPostItem[] | null = null;
 let lastFeedFetchedAt = 0;
 const FEED_CACHE_TTL_MS = 20_000;
 
+const QUICK_REACTIONS = ['❤️', '😂', '😮', '😍', '😢', '👏', '🔥', '🙌'];
+
 function formatRelativeTime(iso?: string): string {
   if (!iso) return 'الآن';
   const ts = new Date(iso).getTime();
@@ -37,11 +67,34 @@ function formatRelativeTime(iso?: string): string {
   const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
   if (diffSec < 45) return 'الآن';
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `منذ ${diffMin} د`;
+  if (diffMin < 60) return `${diffMin} د`;
   const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `منذ ${diffHr} س`;
+  if (diffHr < 24) return `${diffHr} س`;
   const diffDay = Math.floor(diffHr / 24);
-  return `منذ ${diffDay} ي`;
+  return `${diffDay} ي`;
+}
+
+function sanitizeReplies(rawReplies: unknown): CommentReplyItem[] {
+  if (!Array.isArray(rawReplies)) return [];
+  return rawReplies
+    .filter((r): r is Record<string, unknown> => Boolean(r && typeof r === 'object'))
+    .map((r, idx) => ({
+      id: typeof r.id === 'string' && r.id ? r.id : `rpl-${idx}-${Date.now()}`,
+      author:
+        typeof r.author === 'string' && r.author.trim()
+          ? r.author.trim()
+          : 'مستخدم وِصل',
+      avatar:
+        typeof r.avatar === 'string' && r.avatar.trim() ? r.avatar.trim() : undefined,
+      text: typeof r.text === 'string' ? r.text : '',
+      createdAt:
+        typeof r.createdAt === 'string' && r.createdAt.trim()
+          ? r.createdAt.trim()
+          : 'الآن',
+      likesCount: typeof r.likesCount === 'number' ? r.likesCount : 0,
+      likedByMe: Boolean(r.likedByMe),
+    }))
+    .filter((r) => r.text.trim().length > 0);
 }
 
 function sanitizeComments(rawComments: unknown): PostCommentItem[] {
@@ -68,8 +121,15 @@ function sanitizeComments(rawComments: unknown): PostCommentItem[] {
       return {
         id: typeof c.id === 'string' && c.id ? c.id : `cmt-${idx}-${Date.now()}`,
         author: authorVal,
+        avatar:
+          typeof c.avatar === 'string' && c.avatar.trim() ? c.avatar.trim() : undefined,
         text: textVal,
         createdAt: timeVal,
+        likesCount: typeof c.likesCount === 'number' ? c.likesCount : 0,
+        likedByMe: Boolean(c.likedByMe),
+        reactionEmoji:
+          typeof c.reactionEmoji === 'string' && c.reactionEmoji ? c.reactionEmoji : '👍',
+        replies: sanitizeReplies(c.replies),
       };
     })
     .filter((c) => c.text.trim().length > 0);
@@ -111,18 +171,32 @@ function normalizeRow(row: any, currentUid: string | null): FeedPostItem {
 
 export default function FeedTab() {
   const store = useAppStore();
-  const storePosts = useMemo(() => (Array.isArray(store?.posts) ? store.posts : []), [store?.posts]);
+  const storePosts = useMemo(
+    () => (Array.isArray(store?.posts) ? store.posts : []),
+    [store?.posts]
+  );
   const currentUserName =
     (typeof store?.profile?.name === 'string' && store.profile.name.trim()) || 'حساب وِصل';
+  const currentUserAvatar =
+    (typeof store?.profile?.avatar === 'string' && store.profile.avatar.trim()) || undefined;
 
   const [posts, setPosts] = useState<FeedPostItem[]>(() => cachedFeedPosts || []);
   const [loading, setLoading] = useState<boolean>(() => !cachedFeedPosts);
   const [refreshing, setRefreshing] = useState(false);
   const [currentUid, setCurrentUid] = useState<string | null>(null);
-  const [openCommentsId, setOpenCommentsId] = useState<string | null>(null);
-  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+
+  // نافذة التعليقات المنبثقة (Bottom Sheet) مثل فيسبوك
+  const [activeSheetPostId, setActiveSheetPostId] = useState<string | null>(null);
+  const [sortMode, setSortMode] = useState<'relevant' | 'newest'>('relevant');
+  const [newCommentText, setNewCommentText] = useState('');
+  const [replyingToComment, setReplyingToComment] = useState<{
+    commentId: string;
+    authorName: string;
+  } | null>(null);
+  const [expandedRepliesIds, setExpandedRepliesIds] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState('');
 
+  const commentInputRef = useRef<HTMLInputElement | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -179,7 +253,6 @@ export default function FeedTab() {
     void fetchPosts(false);
   }, [fetchPosts]);
 
-  // دمج منشورات المتجر المحلية الجديدة فوراً مع منشورات السحابة بدون تكرار
   const mergedPosts = useMemo(() => {
     const localMapped: FeedPostItem[] = storePosts
       .filter((p): p is Record<string, any> => Boolean(p && typeof p === 'object'))
@@ -231,6 +304,11 @@ export default function FeedTab() {
     return combined;
   }, [storePosts, posts, currentUid, currentUserName]);
 
+  const activePost = useMemo(
+    () => mergedPosts.find((p) => p.id === activeSheetPostId) || null,
+    [mergedPosts, activeSheetPostId]
+  );
+
   const sendPostNotification = async (
     targetPost: FeedPostItem,
     type: 'like' | 'comment',
@@ -242,11 +320,9 @@ export default function FeedTab() {
         user_id: targetPost.userId,
         sender_id: currentUid,
         actor_name: currentUserName,
+        actor_avatar: currentUserAvatar || null,
         type,
-        message:
-          type === 'like'
-            ? 'أعجب بمنشورك'
-            : 'علّق على منشورك',
+        message: type === 'like' ? 'أعجب بمنشورك' : 'علّق على منشورك',
         preview_text: previewText || targetPost.content.slice(0, 60) || null,
         is_read: false,
       });
@@ -276,16 +352,119 @@ export default function FeedTab() {
     }
   };
 
-  const handleAddComment = (item: FeedPostItem, e: React.FormEvent) => {
+  const handleToggleCommentLike = (postId: string, commentId: string) => {
+    const updater = (list: FeedPostItem[]) =>
+      list.map((p) => {
+        if (p.id !== postId) return p;
+        return {
+          ...p,
+          comments: p.comments.map((c) => {
+            if (c.id !== commentId) return c;
+            const nextLiked = !c.likedByMe;
+            return {
+              ...c,
+              likedByMe: nextLiked,
+              likesCount: Math.max(0, c.likesCount + (nextLiked ? 1 : -1)),
+            };
+          }),
+        };
+      });
+
+    setPosts(updater);
+    if (cachedFeedPosts) {
+      cachedFeedPosts = updater(cachedFeedPosts);
+    }
+  };
+
+  const handleToggleReplyLike = (postId: string, commentId: string, replyId: string) => {
+    const updater = (list: FeedPostItem[]) =>
+      list.map((p) => {
+        if (p.id !== postId) return p;
+        return {
+          ...p,
+          comments: p.comments.map((c) => {
+            if (c.id !== commentId) return c;
+            return {
+              ...c,
+              replies: c.replies.map((r) => {
+                if (r.id !== replyId) return r;
+                const nextLiked = !r.likedByMe;
+                return {
+                  ...r,
+                  likedByMe: nextLiked,
+                  likesCount: Math.max(0, r.likesCount + (nextLiked ? 1 : -1)),
+                };
+              }),
+            };
+          }),
+        };
+      });
+
+    setPosts(updater);
+    if (cachedFeedPosts) {
+      cachedFeedPosts = updater(cachedFeedPosts);
+    }
+  };
+
+  const handleStartReply = (commentId: string, authorName: string) => {
+    setReplyingToComment({ commentId, authorName });
+    setExpandedRepliesIds((prev) => ({ ...prev, [commentId]: true }));
+    setTimeout(() => {
+      commentInputRef.current?.focus();
+    }, 60);
+  };
+
+  const handleSubmitCommentOrReply = (item: FeedPostItem, e: React.FormEvent) => {
     e.preventDefault();
-    const text = (commentDrafts[item.id] || '').trim();
-    if (!text) return;
+    const cleaned = newCommentText.trim();
+    if (!cleaned) return;
+
+    if (replyingToComment) {
+      const targetCommentId = replyingToComment.commentId;
+      const newReply: CommentReplyItem = {
+        id: `rpl-${Date.now()}`,
+        author: currentUserName,
+        avatar: currentUserAvatar,
+        text: cleaned,
+        createdAt: 'الآن',
+        likesCount: 0,
+        likedByMe: false,
+      };
+
+      const updater = (list: FeedPostItem[]) =>
+        list.map((p) => {
+          if (p.id !== item.id) return p;
+          return {
+            ...p,
+            comments: p.comments.map((c) =>
+              c.id === targetCommentId
+                ? { ...c, replies: [...c.replies, newReply] }
+                : c
+            ),
+          };
+        });
+
+      setPosts(updater);
+      if (cachedFeedPosts) {
+        cachedFeedPosts = updater(cachedFeedPosts);
+      }
+      setExpandedRepliesIds((prev) => ({ ...prev, [targetCommentId]: true }));
+      setReplyingToComment(null);
+      setNewCommentText('');
+      void sendPostNotification(item, 'comment', `رد: ${cleaned}`);
+      return;
+    }
 
     const newComment: PostCommentItem = {
       id: `cmt-${Date.now()}`,
       author: currentUserName,
-      text,
+      avatar: currentUserAvatar,
+      text: cleaned,
       createdAt: 'الآن',
+      likesCount: 0,
+      likedByMe: false,
+      reactionEmoji: '👍',
+      replies: [],
     };
 
     const updater = (list: FeedPostItem[]) =>
@@ -297,8 +476,13 @@ export default function FeedTab() {
     if (cachedFeedPosts) {
       cachedFeedPosts = updater(cachedFeedPosts);
     }
-    setCommentDrafts((prev) => ({ ...prev, [item.id]: '' }));
-    void sendPostNotification(item, 'comment', text);
+    setNewCommentText('');
+    void sendPostNotification(item, 'comment', cleaned);
+  };
+
+  const handleInsertQuickReaction = (emoji: string) => {
+    setNewCommentText((prev) => (prev ? `${prev} ${emoji}` : emoji));
+    commentInputRef.current?.focus();
   };
 
   const handleSharePost = async (item: FeedPostItem) => {
@@ -324,6 +508,9 @@ export default function FeedTab() {
     if (cachedFeedPosts) {
       cachedFeedPosts = filterFn(cachedFeedPosts);
     }
+    if (activeSheetPostId === item.id) {
+      setActiveSheetPostId(null);
+    }
 
     if (item.dbId) {
       try {
@@ -333,6 +520,21 @@ export default function FeedTab() {
       }
     }
   };
+
+  const openCommentsSheet = (postId: string) => {
+    setReplyingToComment(null);
+    setNewCommentText('');
+    setActiveSheetPostId(postId);
+  };
+
+  const displayedSheetComments = useMemo(() => {
+    if (!activePost) return [];
+    const list = [...activePost.comments];
+    if (sortMode === 'newest') {
+      return list.reverse();
+    }
+    return list;
+  }, [activePost, sortMode]);
 
   return (
     <div dir="rtl" className="space-y-3 pb-8">
@@ -386,8 +588,11 @@ export default function FeedTab() {
               item.id.startsWith('post-') ||
               item.id.startsWith('local-')
           );
-          const isCommentsOpen = openCommentsId === item.id;
           const safeComments = Array.isArray(item.comments) ? item.comments : [];
+          const totalCommentsAndReplies = safeComments.reduce(
+            (acc, c) => acc + 1 + (Array.isArray(c.replies) ? c.replies.length : 0),
+            0
+          );
 
           return (
             <article
@@ -450,7 +655,9 @@ export default function FeedTab() {
 
               <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 text-[11px] text-slate-400">
                 <span>{item.likesCount > 0 ? `${item.likesCount} إعجاب` : ''}</span>
-                <span>{safeComments.length > 0 ? `${safeComments.length} تعليق` : ''}</span>
+                <span>
+                  {totalCommentsAndReplies > 0 ? `${totalCommentsAndReplies} تعليق` : ''}
+                </span>
               </div>
 
               <div className="grid grid-cols-3 gap-1 border-t border-slate-800/80 pt-1.5">
@@ -469,14 +676,8 @@ export default function FeedTab() {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    setOpenCommentsId((prev) => (prev === item.id ? null : item.id))
-                  }
-                  className={`flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-bold transition ${
-                    isCommentsOpen
-                      ? 'bg-cyan-500/15 text-cyan-300'
-                      : 'text-slate-300 hover:bg-white/5'
-                  }`}
+                  onClick={() => openCommentsSheet(item.id)}
+                  className="flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-bold text-slate-300 hover:bg-white/5 transition"
                 >
                   <MessageCircle size={15} />
                   <span>تعليق</span>
@@ -491,48 +692,306 @@ export default function FeedTab() {
                   <span>مشاركة</span>
                 </button>
               </div>
-
-              {isCommentsOpen && (
-                <div className="space-y-2 border-t border-slate-800/80 pt-2.5">
-                  {safeComments.map((c) => (
-                    <div
-                      key={c.id}
-                      className="rounded-xl bg-slate-950/80 border border-slate-800/70 px-3 py-2 text-xs"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-cyan-300">{c.author}</span>
-                        <span className="text-[10px] text-slate-500">{c.createdAt}</span>
-                      </div>
-                      <p className="mt-0.5 text-slate-200">{c.text}</p>
-                    </div>
-                  ))}
-
-                  <form
-                    onSubmit={(e) => handleAddComment(item, e)}
-                    className="flex items-center gap-2"
-                  >
-                    <input
-                      type="text"
-                      value={commentDrafts[item.id] || ''}
-                      onChange={(e) =>
-                        setCommentDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))
-                      }
-                      placeholder="اكتب تعليقاً..."
-                      className="flex-1 rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
-                    />
-                    <button
-                      type="submit"
-                      aria-label="إرسال التعليق"
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#1877F2] text-white hover:bg-[#166fe5] transition"
-                    >
-                      <Send size={14} />
-                    </button>
-                  </form>
-                </div>
-              )}
             </article>
           );
         })
+      )}
+
+      {/* نافذة التعليقات المنبثقة بأسلوب فيسبوك مع الرد والتفاعل */}
+      {activePost && (
+        <div
+          dir="rtl"
+          className="fixed inset-0 z-50 flex flex-col justify-end bg-black/75"
+          onClick={() => setActiveSheetPostId(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-2xl mx-auto h-[84vh] rounded-t-3xl border-t border-white/10 bg-[#18191a] text-[#e4e6eb] flex flex-col overflow-hidden shadow-2xl"
+          >
+            {/* مقبض علوي وشريط التفاعلات العلوي */}
+            <div className="bg-[#242526] border-b border-white/10 px-4 pt-2 pb-2.5 space-y-2.5">
+              <div className="mx-auto h-1.5 w-11 rounded-full bg-slate-500/70" />
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleLike(activePost)}
+                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition ${
+                      activePost.likedByMe
+                        ? 'bg-[#1877F2]/20 text-[#4599FF]'
+                        : 'bg-white/5 text-slate-200 hover:bg-white/10'
+                    }`}
+                  >
+                    <ThumbsUp
+                      size={14}
+                      className={activePost.likedByMe ? 'fill-[#4599FF]' : ''}
+                    />
+                    <span>{activePost.likesCount}</span>
+                  </button>
+
+                  <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-300">
+                    <MessageCircle size={14} />
+                    <span>{activePost.comments.length}</span>
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleSharePost(activePost)}
+                    aria-label="مشاركة"
+                    className="flex h-7 w-7 items-center justify-center rounded-full text-slate-300 hover:bg-white/10"
+                  >
+                    <Share2 size={14} />
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveSheetPostId(null)}
+                  aria-label="إغلاق التعليقات"
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-slate-200 hover:bg-white/15"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* شريط الفرز (الأكثر ملاءمة / الأحدث) */}
+            <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#18191a]">
+              <button
+                type="button"
+                onClick={() =>
+                  setSortMode((prev) => (prev === 'relevant' ? 'newest' : 'relevant'))
+                }
+                className="inline-flex items-center gap-1.5 text-xs font-extrabold text-slate-200"
+              >
+                <span>{sortMode === 'relevant' ? 'الأكثر ملاءمة' : 'الأحدث'}</span>
+                <ChevronDown size={14} className="text-slate-400" />
+              </button>
+              <span className="text-[11px] text-slate-400">
+                تعليقات منشور {activePost.authorName}
+              </span>
+            </div>
+
+            {/* قائمة التعليقات والردود */}
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+              {displayedSheetComments.length === 0 ? (
+                <div className="py-12 text-center space-y-1">
+                  <p className="text-sm font-bold text-slate-200">لا توجد تعليقات بعد</p>
+                  <p className="text-xs text-slate-400">كن أول من يعلّق ويتفاعل على هذا المنشور.</p>
+                </div>
+              ) : (
+                displayedSheetComments.map((cmt) => {
+                  const hasReplies = Array.isArray(cmt.replies) && cmt.replies.length > 0;
+                  const showReplies = Boolean(expandedRepliesIds[cmt.id]);
+
+                  return (
+                    <div key={cmt.id} className="space-y-2">
+                      <div className="flex items-start gap-2.5">
+                        {cmt.avatar ? (
+                          <img
+                            src={cmt.avatar}
+                            alt={cmt.author}
+                            loading="lazy"
+                            decoding="async"
+                            className="h-9 w-9 shrink-0 rounded-full object-cover border border-white/15 mt-0.5"
+                          />
+                        ) : (
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cyan-600/35 to-purple-600/35 border border-white/15 text-xs font-black text-cyan-200 mt-0.5">
+                            {cmt.author.slice(0, 1)}
+                          </div>
+                        )}
+
+                        <div className="flex-1 min-w-0">
+                          <div className="relative inline-block max-w-full rounded-2xl bg-[#2a2b2e] px-3.5 py-2">
+                            <p className="text-xs font-extrabold text-white">{cmt.author}</p>
+                            <p className="mt-0.5 whitespace-pre-line text-xs leading-relaxed text-slate-100">
+                              {cmt.text}
+                            </p>
+
+                            {cmt.likesCount > 0 && (
+                              <span className="absolute -bottom-2.5 -left-2 inline-flex items-center gap-1 rounded-full bg-[#3a3b3f] border border-[#18191a] px-1.5 py-0.5 text-[10px] font-bold text-slate-200 shadow">
+                                <span>{cmt.reactionEmoji || '👍'}</span>
+                                <span>{cmt.likesCount}</span>
+                              </span>
+                            )}
+                          </div>
+
+                          <div
+                            className={`flex items-center gap-4 px-2 text-[11px] font-bold text-slate-400 ${
+                              cmt.likesCount > 0 ? 'mt-2.5' : 'mt-1'
+                            }`}
+                          >
+                            <span>{cmt.createdAt}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleCommentLike(activePost.id, cmt.id)}
+                              className={
+                                cmt.likedByMe
+                                  ? 'text-[#4599FF]'
+                                  : 'text-slate-400 hover:text-slate-200'
+                              }
+                            >
+                              أعجبني
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleStartReply(cmt.id, cmt.author)}
+                              className="text-slate-400 hover:text-slate-200"
+                            >
+                              رد
+                            </button>
+                          </div>
+
+                          {/* زر عرض الردود السابقة */}
+                          {hasReplies && !showReplies && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedRepliesIds((prev) => ({
+                                  ...prev,
+                                  [cmt.id]: true,
+                                }))
+                              }
+                              className="mt-2 inline-flex items-center gap-1.5 px-2 text-xs font-extrabold text-slate-300 hover:text-white"
+                            >
+                              <ChevronDown size={14} />
+                              <span>عرض الردود السابقة ({cmt.replies.length})</span>
+                            </button>
+                          )}
+
+                          {/* قائمة الردود المتداخلة */}
+                          {hasReplies && showReplies && (
+                            <div className="mt-2.5 mr-2 pr-3 border-r-2 border-slate-700 space-y-2.5">
+                              {cmt.replies.map((rep) => (
+                                <div key={rep.id} className="flex items-start gap-2">
+                                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-800 border border-white/10 text-[11px] font-black text-cyan-300 mt-0.5">
+                                    {rep.author.slice(0, 1)}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="inline-block max-w-full rounded-2xl bg-[#2a2b2e] px-3 py-1.5">
+                                      <p className="text-[11px] font-extrabold text-white">
+                                        {rep.author}
+                                      </p>
+                                      <p className="mt-0.5 text-xs text-slate-100">{rep.text}</p>
+                                    </div>
+                                    <div className="mt-1 flex items-center gap-3 px-2 text-[10px] font-bold text-slate-400">
+                                      <span>{rep.createdAt}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleToggleReplyLike(activePost.id, cmt.id, rep.id)
+                                        }
+                                        className={
+                                          rep.likedByMe
+                                            ? 'text-[#4599FF]'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                        }
+                                      >
+                                        أعجبني {rep.likesCount > 0 ? `(${rep.likesCount})` : ''}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleStartReply(cmt.id, rep.author)}
+                                        className="text-slate-400 hover:text-slate-200"
+                                      >
+                                        رد
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* شريط التفاعلات السريعة + خانة «اكتب تعليقاً...» الثابتة بالأسفل */}
+            <div className="border-t border-white/10 bg-[#242526] px-3 pt-2 pb-3 space-y-2">
+              {replyingToComment && (
+                <div className="flex items-center justify-between rounded-xl bg-[#18191a] px-3 py-1.5 text-[11px] text-slate-300">
+                  <span className="inline-flex items-center gap-1.5">
+                    <CornerDownLeft size={12} className="text-cyan-400" />
+                    <span>
+                      الرد على <strong className="text-white">{replyingToComment.authorName}</strong>
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setReplyingToComment(null)}
+                    className="text-rose-400 font-bold hover:underline"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              )}
+
+              {/* شريط الإيموجي السريع مثل فيسبوك */}
+              <div className="flex items-center justify-between gap-1 overflow-x-auto px-1 py-0.5">
+                {QUICK_REACTIONS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    onClick={() => handleInsertQuickReaction(emoji)}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-base hover:bg-white/10 transition"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+
+              <form
+                onSubmit={(e) => handleSubmitCommentOrReply(activePost, e)}
+                className="flex items-center gap-2"
+              >
+                <div className="flex flex-1 items-center gap-2 rounded-full bg-[#3a3b3c] px-3.5 py-2">
+                  <input
+                    ref={commentInputRef}
+                    type="text"
+                    value={newCommentText}
+                    onChange={(e) => setNewCommentText(e.target.value)}
+                    placeholder={
+                      replyingToComment
+                        ? `الرد على ${replyingToComment.authorName}...`
+                        : 'اكتب تعليقاً...'
+                    }
+                    className="flex-1 bg-transparent text-xs text-white placeholder:text-slate-400 outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleInsertQuickReaction('😊')}
+                    aria-label="إيموجي"
+                    className="text-slate-300 hover:text-white"
+                  >
+                    <Smile size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleInsertQuickReaction('📷')}
+                    aria-label="مرفق"
+                    className="text-slate-300 hover:text-white"
+                  >
+                    <ImageIcon size={16} />
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={!newCommentText.trim()}
+                  aria-label="إرسال"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1877F2] text-white disabled:opacity-40 hover:bg-[#166fe5] transition"
+                >
+                  <Send size={15} />
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
