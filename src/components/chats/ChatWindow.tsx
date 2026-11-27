@@ -1,5 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Send } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRight, Send } from 'lucide-react';
+import { useAppStore } from '@/store/useAppStore';
+import { Avatar } from '@/components/UserCard';
 import {
   fetchConversationMessages,
   getCurrentAuthUserId,
@@ -9,17 +11,31 @@ import {
   subscribeToConversationMessages,
 } from '@/services/messagesService';
 
-interface PersistentChatBoxProps {
-  peerId: string;
-  peerName: string;
+interface ChatWindowProps {
+  onBack?: () => void;
   currentUserId?: string | null;
 }
 
-export default function PersistentChatBox({
-  peerId,
-  peerName,
+export default function ChatWindow({
+  onBack,
   currentUserId: externalUserId,
-}: PersistentChatBoxProps) {
+}: ChatWindowProps) {
+  const { conversations, activeConversationId } = useAppStore();
+
+  const activeConv = useMemo(
+    () => conversations.find((c) => c.id === activeConversationId) ?? null,
+    [conversations, activeConversationId]
+  );
+
+  const peerId = activeConv?.user?.id ?? '';
+  const rawName = activeConv?.user?.name;
+  const peerName =
+    typeof rawName === 'string' && rawName.trim().length > 0 && rawName !== 'undefined'
+      ? rawName.trim()
+      : 'مستخدم وِصل';
+  const peerAvatar = activeConv?.user?.avatar ?? '';
+  const peerOnline = Boolean(activeConv?.user?.isOnline);
+
   const [myUserId, setMyUserId] = useState<string | null>(externalUserId ?? null);
   const [messages, setMessages] = useState<PersistentMessage[]>(() => {
     const uid = externalUserId ?? null;
@@ -50,9 +66,7 @@ export default function PersistentChatBox({
     }
 
     const cached = readCachedMessages(myUserId, peerId);
-    if (cached.length > 0) {
-      setMessages(cached);
-    }
+    setMessages(cached);
 
     let active = true;
     void fetchConversationMessages(myUserId, peerId).then((list) => {
@@ -72,12 +86,24 @@ export default function PersistentChatBox({
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'auto' });
-  }, [messages.length]);
+  }, [messages.length, peerId]);
+
+  if (!activeConv || !peerId) {
+    return (
+      <div
+        dir="rtl"
+        className="flex h-full w-full flex-col items-center justify-center p-6 text-center text-slate-400"
+      >
+        <p className="text-sm font-bold text-slate-300">اختر محادثة أو اضغط «مراسلة» على صديق</p>
+        <p className="mt-1 text-xs text-slate-500">ستظهر نافذة الدردشة والرسائل هنا مباشرة.</p>
+      </div>
+    );
+  }
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = inputText.trim();
-    if (!trimmed) return;
+    if (!trimmed || !peerId) return;
 
     const senderId = myUserId || '';
     const tempId = `temp-${Date.now()}`;
@@ -118,10 +144,25 @@ export default function PersistentChatBox({
   };
 
   return (
-    <div dir="rtl" className="flex flex-col rounded-2xl border border-slate-800 bg-slate-900/85 overflow-hidden">
-      <div className="flex items-center justify-between border-b border-slate-800 px-4 py-2.5 bg-slate-950/70">
-        <span className="text-xs font-black text-white">{peerName}</span>
-        <span className="text-[10px] text-cyan-400">محفوظ في السحابة</span>
+    <div dir="rtl" className="flex h-full w-full flex-col bg-slate-900/85 overflow-hidden">
+      <div className="flex items-center justify-between border-b border-slate-800 px-3.5 py-2.5 bg-slate-950/70">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label="رجوع إلى المحادثات"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-300 hover:bg-slate-800 md:hidden"
+            >
+              <ArrowRight size={18} />
+            </button>
+          )}
+          <Avatar src={peerAvatar} online={peerOnline} />
+          <div className="min-w-0">
+            <p className="truncate text-xs font-black text-white">{peerName}</p>
+            <p className="text-[10px] text-cyan-400">محفوظ في السحابة</p>
+          </div>
+        </div>
       </div>
 
       {notice && (
@@ -130,9 +171,11 @@ export default function PersistentChatBox({
         </div>
       )}
 
-      <div className="max-h-80 overflow-y-auto p-3.5 space-y-2.5">
+      <div className="flex-1 overflow-y-auto p-3.5 space-y-2.5">
         {messages.length === 0 ? (
-          <p className="py-6 text-center text-xs text-slate-500">لا توجد رسائل بعد. ابدأ المحادثة الآن.</p>
+          <p className="py-8 text-center text-xs text-slate-500">
+            لا توجد رسائل بعد مع {peerName}. ابدأ المحادثة الآن.
+          </p>
         ) : (
           messages.map((msg) => {
             const isMine = msg.sender_id === myUserId;
@@ -161,7 +204,10 @@ export default function PersistentChatBox({
         <div ref={bottomRef} />
       </div>
 
-      <form onSubmit={handleSend} className="flex items-center gap-2 border-t border-slate-800 p-2.5 bg-slate-950/70">
+      <form
+        onSubmit={handleSend}
+        className="flex items-center gap-2 border-t border-slate-800 p-2.5 bg-slate-950/70"
+      >
         <input
           type="text"
           value={inputText}
