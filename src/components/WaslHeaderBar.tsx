@@ -224,18 +224,6 @@ function writeScopedAccountProfile(
   }
 }
 
-function clearAllLegacyAndCurrentIdentity(): void {
-  try {
-    localStorage.removeItem('wasl_override_name_v1');
-    localStorage.removeItem('wasl_profile_meta_v3');
-    if (typeof window !== 'undefined') {
-      window.name = '';
-    }
-  } catch {
-    // تجاهل
-  }
-}
-
 function readLocalSavedAccounts(): SwitchableAccount[] {
   try {
     const raw = localStorage.getItem(SAVED_ACCOUNTS_KEY);
@@ -330,94 +318,33 @@ export function WaslHeaderBar({
   const [switchManageMode, setSwitchManageMode] = useState(false);
 
   const [currentUid, setCurrentUid] = useState<string | null>(null);
-  const [displayName, setDisplayName] = useState<string>(currentUserName || '');
-  const [activeAvatar, setActiveAvatar] = useState<string | undefined>(
-    isValidAvatarUrl(userAvatar) ? userAvatar?.trim() : undefined
-  );
+  const [overrideName, setOverrideName] = useState<string>('');
   const [lastNameChangedAt, setLastNameChangedAt] = useState<number | null>(null);
-
-  const syncedUidRef = useRef<string | null>(null);
-
-  const syncAccountFromSession = async (uid: string | null) => {
-    clearAllLegacyAndCurrentIdentity();
-    setCurrentUid(uid);
-
-    if (!uid) {
-      syncedUidRef.current = null;
-      setDisplayName('');
-      setActiveAvatar(undefined);
-      setLastNameChangedAt(null);
-      return;
-    }
-
-    const scoped = readScopedAccountProfile(uid);
-    if (scoped.name) setDisplayName(scoped.name);
-    if (scoped.avatar) setActiveAvatar(scoped.avatar);
-    if (scoped.lastNameChangedAt) setLastNameChangedAt(scoped.lastNameChangedAt);
-
-    try {
-      const { data: prof } = await supabase
-        .from('profiles')
-        .select('full_name, avatar_url')
-        .eq('id', uid)
-        .maybeSingle();
-
-      const { data: authUserRes } = await supabase.auth.getUser();
-      const metaName =
-        typeof authUserRes?.user?.user_metadata?.full_name === 'string'
-          ? authUserRes.user.user_metadata.full_name.trim()
-          : typeof authUserRes?.user?.user_metadata?.name === 'string'
-            ? authUserRes.user.user_metadata.name.trim()
-            : '';
-
-      const resolvedName =
-        (typeof prof?.full_name === 'string' && prof.full_name.trim()) ||
-        metaName ||
-        scoped.name ||
-        currentUserName ||
-        '';
-
-      const resolvedAvatar =
-        (isValidAvatarUrl(prof?.avatar_url) && String(prof?.avatar_url).trim()) ||
-        (isValidAvatarUrl(userAvatar) && String(userAvatar).trim()) ||
-        scoped.avatar ||
-        undefined;
-
-      setDisplayName(resolvedName);
-      setActiveAvatar(resolvedAvatar);
-      syncedUidRef.current = uid;
-
-      if (resolvedName || resolvedAvatar) {
-        writeScopedAccountProfile(uid, {
-          name: resolvedName,
-          avatar: resolvedAvatar,
-        });
-      }
-    } catch {
-      if (!scoped.name && currentUserName) {
-        setDisplayName(currentUserName);
-      }
-    }
-  };
 
   useEffect(() => {
     let active = true;
-    void (async () => {
-      const { data } = await supabase.auth.getSession();
+    void supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
       const uid = data?.session?.user?.id ?? null;
-      await syncAccountFromSession(uid);
-    })();
+      setCurrentUid(uid);
+      if (uid) {
+        const scoped = readScopedAccountProfile(uid);
+        if (scoped.lastNameChangedAt) setLastNameChangedAt(scoped.lastNameChangedAt);
+      }
+    });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
       const uid = session?.user?.id ?? null;
-      if (event === 'SIGNED_OUT' || !uid) {
-        void syncAccountFromSession(null);
-      } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
-        void syncAccountFromSession(uid);
+      setCurrentUid(uid);
+      setOverrideName('');
+      if (uid) {
+        const scoped = readScopedAccountProfile(uid);
+        setLastNameChangedAt(scoped.lastNameChangedAt);
+      } else {
+        setLastNameChangedAt(null);
       }
     });
 
@@ -427,19 +354,7 @@ export function WaslHeaderBar({
     };
   }, []);
 
-  useEffect(() => {
-    if (!currentUid) return;
-    if (currentUserName && currentUserName !== displayName && !syncedUidRef.current) {
-      setDisplayName(currentUserName);
-    }
-    if (isValidAvatarUrl(userAvatar)) {
-      const cleanAv = userAvatar!.trim();
-      setActiveAvatar(cleanAv);
-      writeScopedAccountProfile(currentUid, { avatar: cleanAv });
-    }
-  }, [currentUid, currentUserName, userAvatar]);
-
-  // بحث عام عن أي حساب مسجل في «وِصل» بالاسم مع مهلة أمان لمنع التعليق
+  // بحث سريع عن أي حساب مسجل في «وِصل» بالاسم
   useEffect(() => {
     const trimmed = searchQuery.trim();
     if (!searchOpen || !trimmed) {
@@ -455,45 +370,32 @@ export function WaslHeaderBar({
       if (!cancelled) {
         setSearchingAccounts(false);
       }
-    }, 4500);
+    }, 3000);
 
     const timer = setTimeout(() => {
       void (async () => {
         try {
           const { data, error } = await supabase
             .from('profiles')
-            .select('*')
-            .limit(40);
+            .select('id, full_name, avatar_url')
+            .ilike('full_name', `%${trimmed}%`)
+            .limit(15);
 
           if (cancelled) return;
 
           if (!error && Array.isArray(data)) {
-            const qLower = trimmed.toLowerCase();
             const mapped: FriendItem[] = data
-              .map((row: any) => {
-                const id = String(row?.id || row?.user_id || '');
-                const candidateName =
-                  row?.full_name ||
-                  row?.name ||
-                  row?.display_name ||
-                  row?.username ||
-                  '';
-                const cleanName = typeof candidateName === 'string' ? candidateName.trim() : '';
-                const candidateAvatar = row?.avatar_url || row?.avatar || '';
-                return {
-                  id,
-                  name: cleanName || 'حساب وِصل',
-                  avatar: isValidAvatarUrl(candidateAvatar)
-                    ? String(candidateAvatar).trim()
-                    : undefined,
-                };
-              })
-              .filter(
-                (item) =>
-                  item.id &&
-                  item.id !== currentUid &&
-                  item.name.toLowerCase().includes(qLower)
-              );
+              .filter((row: any) => row?.id && row.id !== currentUid)
+              .map((row: any) => ({
+                id: String(row.id),
+                name:
+                  typeof row.full_name === 'string' && row.full_name.trim()
+                    ? row.full_name.trim()
+                    : 'حساب وِصل',
+                avatar: isValidAvatarUrl(row.avatar_url)
+                  ? String(row.avatar_url).trim()
+                  : undefined,
+              }));
 
             setGlobalAccounts(mapped);
           } else {
@@ -516,7 +418,7 @@ export function WaslHeaderBar({
           }
         }
       })();
-    }, 200);
+    }, 250);
 
     return () => {
       cancelled = true;
@@ -525,77 +427,31 @@ export function WaslHeaderBar({
     };
   }, [searchOpen, searchQuery, currentUid, friends]);
 
-  const loadAccountsForSwitcher = async () => {
-    const localList = readLocalSavedAccounts();
-    setSwitchAccountsList(localList);
-
-    try {
-      const { data: authData } = await supabase.auth.getUser();
-      const authUid = authData?.user?.id;
-      if (!authUid) {
-        setSwitchAccountsList(localList);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('saved_accounts')
-        .select('id, name, avatar, phone_or_email, last_used_at')
-        .eq('owner_id', authUid)
-        .order('last_used_at', { ascending: false });
-
-      if (!error && Array.isArray(data)) {
-        const remoteList: SwitchableAccount[] = data.map((row: any) => ({
-          id: String(row.id),
-          name: String(row.name || 'مستخدم وِصل'),
-          avatar: isValidAvatarUrl(row.avatar) ? String(row.avatar).trim() : undefined,
-          phoneOrEmail:
-            typeof row.phone_or_email === 'string' && row.phone_or_email
-              ? row.phone_or_email
-              : undefined,
-          lastUsedAt: row.last_used_at ? new Date(String(row.last_used_at)).getTime() : Date.now(),
-        }));
-
-        const merged = new Map<string, SwitchableAccount>();
-        for (const r of remoteList) merged.set(r.id, r);
-        for (const l of localList) {
-          if (!merged.has(l.id)) merged.set(l.id, l);
-        }
-        const combined = Array.from(merged.values()).sort((a, b) => b.lastUsedAt - a.lastUsedAt);
-        writeLocalSavedAccounts(combined);
-        setSwitchAccountsList(combined);
-      }
-    } catch {
-      // يكتفي بالقائمة المحلية
-    }
-  };
-
   const triggerOpenSwitchAccount = () => {
     setSwitchManageMode(false);
+    setSwitchAccountsList(readLocalSavedAccounts());
     setSwitchModalOpen(true);
-    void loadAccountsForSwitcher();
     onOpenSwitchAccount?.();
   };
 
   const handleStartFreshAccountOrProfile = async () => {
     setSwitchModalOpen(false);
-    await syncAccountFromSession(null);
-
+    setOverrideName('');
     if (onLogout) {
       onLogout();
     } else {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
       window.dispatchEvent(new Event('wasl-auth-reset'));
     }
   };
 
   const handleTriggerLogout = async () => {
     setDrawerOpen(false);
-    await syncAccountFromSession(null);
-
+    setOverrideName('');
     if (onLogout) {
       onLogout();
     } else {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
       window.dispatchEvent(new Event('wasl-auth-reset'));
     }
   };
@@ -610,20 +466,10 @@ export function WaslHeaderBar({
     };
   });
 
-  const handlePickAccountFromModal = async (acc: SwitchableAccount) => {
+  const handlePickAccountFromModal = (acc: SwitchableAccount) => {
     if (switchManageMode) return;
     const now = Date.now();
-    const targetUid = acc.id || currentUid;
-
-    setDisplayName(acc.name);
-    const nextAvatar = isValidAvatarUrl(acc.avatar) ? acc.avatar : undefined;
-    setActiveAvatar(nextAvatar);
-    if (targetUid) {
-      writeScopedAccountProfile(targetUid, {
-        name: acc.name,
-        avatar: nextAvatar,
-      });
-    }
+    setOverrideName(acc.name);
 
     const updatedList = [
       { ...acc, lastUsedAt: now },
@@ -632,39 +478,14 @@ export function WaslHeaderBar({
     setSwitchAccountsList(updatedList);
     writeLocalSavedAccounts(updatedList);
 
-    try {
-      const { data: authData } = await supabase.auth.getUser();
-      const authUid = authData?.user?.id;
-      if (authUid) {
-        await supabase.from('saved_accounts').upsert(
-          {
-            id: acc.id,
-            owner_id: authUid,
-            name: acc.name,
-            avatar: nextAvatar || null,
-            phone_or_email: acc.phoneOrEmail || null,
-            last_used_at: new Date(now).toISOString(),
-          },
-          { onConflict: 'id' }
-        );
-      }
-    } catch {
-      // تجاهل
-    }
-
     setSwitchModalOpen(false);
     onSelectTab('feed');
   };
 
-  const handleDeleteAccountFromModal = async (id: string) => {
+  const handleDeleteAccountFromModal = (id: string) => {
     const filtered = switchAccountsList.filter((item) => item.id !== id);
     setSwitchAccountsList(filtered);
     writeLocalSavedAccounts(filtered);
-    try {
-      await supabase.from('saved_accounts').delete().eq('id', id);
-    } catch {
-      // تجاهل
-    }
   };
 
   const [editDetailsOpen, setEditDetailsOpen] = useState(false);
@@ -676,6 +497,9 @@ export function WaslHeaderBar({
   const [settingsScreenOpen, setSettingsScreenOpen] = useState(false);
   const [settingsSearch, setSettingsSearch] = useState('');
   const [settingsNotice, setSettingsNotice] = useState('');
+
+  const effectiveName = overrideName || currentUserName || 'حساب وِصل';
+  const effectiveAvatar = isValidAvatarUrl(userAvatar) ? userAvatar?.trim() : undefined;
 
   const [isPublicAccount, setIsPublicAccount] = useState<boolean>(() => {
     try {
@@ -738,18 +562,18 @@ export function WaslHeaderBar({
     setSettingsNotice(msg);
     setTimeout(() => {
       setSettingsNotice('');
-    }, 3000);
+    }, 2500);
   };
 
   const lockInfo = getNameCooldownInfo(lastNameChangedAt);
 
   const openEditDetailsModal = () => {
-    setEditNameInput(displayName);
+    setEditNameInput(effectiveName);
     setEditError('');
     setEditDetailsOpen(true);
   };
 
-  const handleSaveDetails = async (e: React.FormEvent) => {
+  const handleSaveDetails = (e: React.FormEvent) => {
     e.preventDefault();
     const cleanedName = editNameInput.trim();
     if (!cleanedName) {
@@ -757,7 +581,7 @@ export function WaslHeaderBar({
       return;
     }
 
-    const nameChanged = cleanedName !== displayName.trim();
+    const nameChanged = cleanedName !== effectiveName.trim();
     const currentLockState = getNameCooldownInfo(lastNameChangedAt);
 
     if (nameChanged && currentLockState.isLocked) {
@@ -767,63 +591,41 @@ export function WaslHeaderBar({
       return;
     }
 
-    setSavingDetails(true);
-    try {
-      let nextLockTs = lastNameChangedAt;
-      if (nameChanged) {
-        nextLockTs = Date.now();
-        setLastNameChangedAt(nextLockTs);
-      }
+    const nextLockTs = nameChanged ? Date.now() : lastNameChangedAt;
+    if (nameChanged && nextLockTs) {
+      setLastNameChangedAt(nextLockTs);
+    }
 
-      setDisplayName(cleanedName);
-      const resolvedAvatar = isValidAvatarUrl(userAvatar)
-        ? userAvatar!.trim()
-        : activeAvatar;
+    setOverrideName(cleanedName);
+    setEditDetailsOpen(false);
+    showTempNotice(
+      nameChanged
+        ? `تم حفظ الاسم ويمكنك تغييره مجدداً بعد ${NAME_COOLDOWN_DAYS} أيام`
+        : 'تم حفظ بيانات الحساب بنجاح'
+    );
 
-      const { data: userData } = await supabase.auth.getUser();
-      const uid = userData?.user?.id || currentUid;
+    if (currentUid) {
+      writeScopedAccountProfile(currentUid, {
+        name: cleanedName,
+        avatar: effectiveAvatar,
+        lastNameChangedAt: nextLockTs,
+      });
 
-      if (uid) {
-        writeScopedAccountProfile(uid, {
-          name: cleanedName,
-          avatar: resolvedAvatar,
-          lastNameChangedAt: nextLockTs,
+      setSavingDetails(true);
+      void supabase
+        .from('profiles')
+        .upsert(
+          {
+            id: currentUid,
+            full_name: cleanedName,
+            avatar_url: effectiveAvatar || null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'id' }
+        )
+        .then(() => {
+          setSavingDetails(false);
         });
-
-        await supabase
-          .from('profiles')
-          .upsert(
-            {
-              id: uid,
-              full_name: cleanedName,
-              avatar_url: resolvedAvatar || null,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'id' }
-          );
-
-        await supabase
-          .from('saved_accounts')
-          .upsert(
-            {
-              id: uid,
-              owner_id: uid,
-              name: cleanedName,
-              avatar: resolvedAvatar || null,
-              last_used_at: new Date().toISOString(),
-            },
-            { onConflict: 'id' }
-          );
-      }
-
-      setEditDetailsOpen(false);
-      showTempNotice(
-        nameChanged
-          ? `تم حفظ الاسم لهذا الحساب ويمكنك تغييره مجدداً بعد ${NAME_COOLDOWN_DAYS} أيام`
-          : 'تم حفظ بيانات الحساب بنجاح'
-      );
-    } finally {
-      setSavingDetails(false);
     }
   };
 
@@ -952,8 +754,7 @@ export function WaslHeaderBar({
 
   const uploadPostImageToStorage = async (file: File, fallbackUrl: string): Promise<string> => {
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      const uid = userData?.user?.id || currentUid || 'guest';
+      const uid = currentUid || 'guest';
       const ext = (file.name.split('.').pop() || 'jpg').replace(/[^a-zA-Z0-9]/g, '');
       const path = `posts/${uid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext || 'jpg'}`;
 
@@ -970,35 +771,38 @@ export function WaslHeaderBar({
     }
   };
 
-  const handlePublishPostModal = async () => {
+  const handlePublishPostModal = () => {
     const finalContent = buildFinalPostContent();
     if ((!finalContent && !postImageData) || publishingPost) return;
 
-    setPublishingPost(true);
-    try {
-      let finalImageUrl: string | undefined = postImageData || undefined;
-      if (postSelectedFile && postImageData) {
-        finalImageUrl = await uploadPostImageToStorage(postSelectedFile, postImageData);
+    const fileSnapshot = postSelectedFile;
+    const imageSnapshot = postImageData;
+    const authorLabel = effectiveName;
+    const userIdSnapshot = currentUid;
+
+    onCreatePostSubmit?.(finalContent, imageSnapshot || undefined);
+    resetPostModal();
+
+    void (async () => {
+      setPublishingPost(true);
+      try {
+        let finalImageUrl: string | undefined = imageSnapshot || undefined;
+        if (fileSnapshot && imageSnapshot) {
+          finalImageUrl = await uploadPostImageToStorage(fileSnapshot, imageSnapshot);
+        }
+
+        await supabase.from('posts').insert({
+          user_id: userIdSnapshot,
+          author_name: authorLabel,
+          headline: finalImageUrl ? `نشر ${authorLabel} صورة` : `نشر ${authorLabel}`,
+          content: finalContent || null,
+          image_url: finalImageUrl || null,
+          kind: finalImageUrl ? 'photo' : 'post',
+        });
+      } finally {
+        setPublishingPost(false);
       }
-
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData?.user?.id ?? currentUid ?? null;
-      const authorLabel = displayName || currentUserName || 'مستخدم وِصل';
-
-      await supabase.from('posts').insert({
-        user_id: userId,
-        author_name: authorLabel,
-        headline: finalImageUrl ? `نشر ${authorLabel} صورة` : `نشر ${authorLabel}`,
-        content: finalContent || null,
-        image_url: finalImageUrl || null,
-        kind: finalImageUrl ? 'photo' : 'post',
-      });
-
-      onCreatePostSubmit?.(finalContent, finalImageUrl);
-      resetPostModal();
-    } finally {
-      setPublishingPost(false);
-    }
+    })();
   };
 
   const canSubmitPost = Boolean(buildFinalPostContent() || postImageData) && !publishingPost;
@@ -1090,9 +894,6 @@ export function WaslHeaderBar({
   const qSettings = settingsSearch.trim().toLowerCase();
   const matchSettingsItem = (label: string) =>
     !qSettings || label.toLowerCase().includes(qSettings);
-
-  const effectiveName = displayName || currentUserName || 'حساب وِصل';
-  const effectiveAvatar = activeAvatar || (isValidAvatarUrl(userAvatar) ? userAvatar?.trim() : undefined);
 
   return (
     <div dir="rtl" className="w-full bg-slate-950 text-slate-100 select-none">
@@ -1410,7 +1211,7 @@ export function WaslHeaderBar({
 
                 <button
                   type="button"
-                  onClick={() => void handlePublishPostModal()}
+                  onClick={handlePublishPostModal}
                   disabled={!canSubmitPost}
                   className={`rounded-lg px-3 py-1 text-xs font-bold transition ${
                     canSubmitPost
@@ -1556,7 +1357,7 @@ export function WaslHeaderBar({
             <div className="sticky bottom-0 bg-[#1c1d21] p-3 border-t border-white/10">
               <button
                 type="button"
-                onClick={() => void handlePublishPostModal()}
+                onClick={handlePublishPostModal}
                 disabled={!canSubmitPost}
                 className="w-full rounded-lg bg-[#1877F2] py-2.5 text-sm font-extrabold text-white shadow transition enabled:hover:bg-[#166fe5] enabled:active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45"
               >
@@ -1824,7 +1625,7 @@ export function WaslHeaderBar({
               <div className="rounded-2xl border border-white/10 bg-[#242526] p-8 text-center space-y-2">
                 <p className="text-sm font-bold text-white">لا توجد حسابات محفوظة بعد</p>
                 <p className="text-xs text-slate-400">
-                  سيتم حفظ الحسابات في Supabase للدخول السريع.
+                  سيتم حفظ الحسابات للدخول السريع.
                 </p>
               </div>
             ) : (
@@ -1833,11 +1634,11 @@ export function WaslHeaderBar({
                 return (
                   <div
                     key={acc.id}
-                    onClick={() => void handlePickAccountFromModal(acc)}
+                    onClick={() => handlePickAccountFromModal(acc)}
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') void handlePickAccountFromModal(acc);
+                      if (e.key === 'Enter' || e.key === ' ') handlePickAccountFromModal(acc);
                     }}
                     className="flex items-center justify-between rounded-2xl border border-white/15 bg-[#242526] px-4 py-3.5 shadow-sm hover:bg-[#2d2f31] active:scale-[0.99] transition cursor-pointer"
                   >
@@ -1861,7 +1662,7 @@ export function WaslHeaderBar({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          void handleDeleteAccountFromModal(acc.id);
+                          handleDeleteAccountFromModal(acc.id);
                         }}
                         aria-label={`إزالة ${acc.name}`}
                         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 transition"
@@ -2178,7 +1979,7 @@ export function WaslHeaderBar({
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
         >
           <form
-            onSubmit={(e) => void handleSaveDetails(e)}
+            onSubmit={handleSaveDetails}
             className="w-full max-w-sm rounded-2xl border border-cyan-500/25 bg-[#242526] p-4 space-y-4 text-white shadow-2xl"
           >
             <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
