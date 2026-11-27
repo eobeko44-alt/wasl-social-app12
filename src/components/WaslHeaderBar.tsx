@@ -69,14 +69,9 @@ const MEDIA_BUCKET = 'wasl-media';
 const PRIVACY_STORAGE_KEY = 'wasl_account_is_public_v1';
 const DARK_MODE_STORAGE_KEY = 'wasl_dark_mode_v1';
 const LANG_STORAGE_KEY = 'wasl_lang_v1';
-const PROFILE_META_KEY = 'wasl_profile_meta_v3';
-const OVERRIDE_NAME_KEY = 'wasl_override_name_v1';
 const SAVED_ACCOUNTS_KEY = 'wasl_saved_accounts_v1';
-const NAME_LOCK_KEY = 'wasl_name_last_changed_at_v1';
 const NAME_COOLDOWN_DAYS = 7;
 const NAME_COOLDOWN_MS = NAME_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
-const HEADER_DB_NAME = 'wasl_header_identity_db_v1';
-const HEADER_DB_STORE = 'identity_store';
 
 const BG_THEMES = [
   { id: 'none', label: 'افتراضي', className: 'bg-transparent text-white' },
@@ -134,6 +129,113 @@ const SWATCH_COLORS: Record<string, string> = {
   light: 'bg-white',
 };
 
+function isValidAvatarUrl(url?: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  return (
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('data:image/') ||
+    trimmed.startsWith('/')
+  );
+}
+
+function getScopedProfileKey(uid: string | null): string {
+  return `wasl_account_profile_${uid || 'guest'}`;
+}
+
+function getScopedNameLockKey(uid: string | null): string {
+  return `wasl_account_name_lock_${uid || 'guest'}`;
+}
+
+function readScopedAccountProfile(uid: string | null): {
+  name: string;
+  avatar?: string;
+  lastNameChangedAt: number | null;
+} {
+  if (!uid) {
+    return { name: '', avatar: undefined, lastNameChangedAt: null };
+  }
+  try {
+    const raw = localStorage.getItem(getScopedProfileKey(uid));
+    const lockRaw = localStorage.getItem(getScopedNameLockKey(uid));
+    const parsedLock = lockRaw ? Number(lockRaw) : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const n =
+        typeof parsed?.name === 'string'
+          ? parsed.name.trim()
+          : typeof parsed?.full_name === 'string'
+            ? parsed.full_name.trim()
+            : '';
+      const av = isValidAvatarUrl(parsed?.avatar || parsed?.avatar_url)
+        ? String(parsed.avatar || parsed.avatar_url).trim()
+        : undefined;
+      return {
+        name: n,
+        avatar: av,
+        lastNameChangedAt:
+          typeof parsedLock === 'number' && !Number.isNaN(parsedLock) && parsedLock > 0
+            ? parsedLock
+            : null,
+      };
+    }
+  } catch {
+    // تجاهل
+  }
+  return { name: '', avatar: undefined, lastNameChangedAt: null };
+}
+
+function writeScopedAccountProfile(
+  uid: string | null,
+  data: { name?: string; avatar?: string; lastNameChangedAt?: number | null }
+): void {
+  if (!uid) return;
+  try {
+    const key = getScopedProfileKey(uid);
+    const prevRaw = localStorage.getItem(key);
+    const prev = prevRaw ? JSON.parse(prevRaw) : {};
+    const nextName = data.name !== undefined ? data.name.trim() : prev.name || '';
+    const nextAvatar =
+      data.avatar !== undefined
+        ? isValidAvatarUrl(data.avatar)
+          ? data.avatar.trim()
+          : undefined
+        : prev.avatar;
+
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        ...prev,
+        id: uid,
+        name: nextName,
+        full_name: nextName,
+        avatar: nextAvatar || null,
+        avatar_url: nextAvatar || null,
+      })
+    );
+
+    if (typeof data.lastNameChangedAt === 'number' && data.lastNameChangedAt > 0) {
+      localStorage.setItem(getScopedNameLockKey(uid), String(data.lastNameChangedAt));
+    }
+  } catch {
+    // تجاهل
+  }
+}
+
+function clearAllLegacyAndCurrentIdentity(): void {
+  try {
+    localStorage.removeItem('wasl_override_name_v1');
+    localStorage.removeItem('wasl_profile_meta_v3');
+    if (typeof window !== 'undefined') {
+      window.name = '';
+    }
+  } catch {
+    // تجاهل
+  }
+}
+
 function readLocalSavedAccounts(): SwitchableAccount[] {
   try {
     const raw = localStorage.getItem(SAVED_ACCOUNTS_KEY);
@@ -144,7 +246,7 @@ function readLocalSavedAccounts(): SwitchableAccount[] {
       .map((item: any, idx: number) => ({
         id: String(item?.id || `acc-${idx}`),
         name: String(item?.name || 'مستخدم وِصل'),
-        avatar: typeof item?.avatar === 'string' && item.avatar ? item.avatar : undefined,
+        avatar: isValidAvatarUrl(item?.avatar) ? String(item.avatar).trim() : undefined,
         phoneOrEmail:
           typeof item?.phoneOrEmail === 'string' && item.phoneOrEmail
             ? item.phoneOrEmail
@@ -163,182 +265,6 @@ function writeLocalSavedAccounts(list: SwitchableAccount[]): void {
   } catch {
     // تجاهل
   }
-}
-
-function openHeaderDB(): Promise<IDBDatabase | null> {
-  return new Promise((resolve) => {
-    try {
-      if (typeof indexedDB === 'undefined') {
-        resolve(null);
-        return;
-      }
-      const req = indexedDB.open(HEADER_DB_NAME, 1);
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(HEADER_DB_STORE)) {
-          db.createObjectStore(HEADER_DB_STORE);
-        }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => resolve(null);
-    } catch {
-      resolve(null);
-    }
-  });
-}
-
-async function writeNameToIDB(
-  name: string,
-  lastNameChangedAt?: number | null
-): Promise<void> {
-  const db = await openHeaderDB();
-  if (!db) return;
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(HEADER_DB_STORE, 'readwrite');
-      tx.objectStore(HEADER_DB_STORE).put(
-        {
-          name,
-          lastNameChangedAt: lastNameChangedAt ?? null,
-        },
-        'current_identity'
-      );
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-    } catch {
-      resolve();
-    }
-  });
-}
-
-async function readNameFromIDB(): Promise<{
-  name: string;
-  lastNameChangedAt: number | null;
-} | null> {
-  const db = await openHeaderDB();
-  if (!db) return null;
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(HEADER_DB_STORE, 'readonly');
-      const req = tx.objectStore(HEADER_DB_STORE).get('current_identity');
-      req.onsuccess = () => {
-        const val = req.result as
-          | { name?: string; lastNameChangedAt?: number | null }
-          | undefined;
-        if (val && (val.name || val.lastNameChangedAt)) {
-          resolve({
-            name: String(val.name || '').trim(),
-            lastNameChangedAt:
-              typeof val.lastNameChangedAt === 'number' ? val.lastNameChangedAt : null,
-          });
-        } else {
-          resolve(null);
-        }
-      };
-      req.onerror = () => resolve(null);
-    } catch {
-      resolve(null);
-    }
-  });
-}
-
-function readWindowNameData(): {
-  name: string;
-  lastNameChangedAt: number | null;
-} {
-  try {
-    if (typeof window !== 'undefined' && window.name) {
-      const parsed = JSON.parse(window.name);
-      if (parsed && parsed.__wasl_id) {
-        return {
-          name: typeof parsed.name === 'string' ? parsed.name.trim() : '',
-          lastNameChangedAt:
-            typeof parsed.lastNameChangedAt === 'number' ? parsed.lastNameChangedAt : null,
-        };
-      }
-    }
-  } catch {
-    // تجاهل
-  }
-  return { name: '', lastNameChangedAt: null };
-}
-
-function writeWindowNameData(
-  name: string,
-  lastNameChangedAt?: number | null
-) {
-  try {
-    if (typeof window !== 'undefined') {
-      let prevLock: number | null = null;
-      try {
-        const existing = JSON.parse(window.name || '{}');
-        if (existing && typeof existing.lastNameChangedAt === 'number') {
-          prevLock = existing.lastNameChangedAt;
-        }
-      } catch {
-        // تجاهل
-      }
-      window.name = JSON.stringify({
-        __wasl_id: true,
-        name,
-        lastNameChangedAt:
-          lastNameChangedAt !== undefined ? lastNameChangedAt : prevLock,
-      });
-    }
-  } catch {
-    // تجاهل
-  }
-}
-
-function readNameLockTimestamp(): number | null {
-  try {
-    const rawLs = localStorage.getItem(NAME_LOCK_KEY);
-    if (rawLs) {
-      const num = Number(rawLs);
-      if (!Number.isNaN(num) && num > 0) return num;
-    }
-  } catch {
-    // تجاهل
-  }
-  try {
-    const rawMeta = localStorage.getItem(PROFILE_META_KEY);
-    if (rawMeta) {
-      const parsed = JSON.parse(rawMeta);
-      if (typeof parsed?.lastNameChangedAt === 'number' && parsed.lastNameChangedAt > 0) {
-        return parsed.lastNameChangedAt;
-      }
-    }
-  } catch {
-    // تجاهل
-  }
-  const winId = readWindowNameData();
-  if (typeof winId.lastNameChangedAt === 'number' && winId.lastNameChangedAt > 0) {
-    return winId.lastNameChangedAt;
-  }
-  return null;
-}
-
-function writeNameLockTimestamp(ts: number) {
-  try {
-    localStorage.setItem(NAME_LOCK_KEY, String(ts));
-  } catch {
-    // تجاهل
-  }
-  try {
-    const rawMeta = localStorage.getItem(PROFILE_META_KEY);
-    const prevMeta = rawMeta ? JSON.parse(rawMeta) : {};
-    localStorage.setItem(
-      PROFILE_META_KEY,
-      JSON.stringify({
-        ...prevMeta,
-        lastNameChangedAt: ts,
-      })
-    );
-  } catch {
-    // تجاهل
-  }
-  const winId = readWindowNameData();
-  writeWindowNameData(winId.name, ts);
 }
 
 function getNameCooldownInfo(lastChangedAt: number | null): {
@@ -375,78 +301,11 @@ function getNameCooldownInfo(lastChangedAt: number | null): {
   };
 }
 
-function readPersistedName(): { name: string; hasOverride: boolean } {
-  try {
-    const ovName = localStorage.getItem(OVERRIDE_NAME_KEY)?.trim() || '';
-    if (ovName) {
-      return { name: ovName, hasOverride: true };
-    }
-
-    const raw = localStorage.getItem(PROFILE_META_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const n =
-        typeof parsed?.name === 'string' && parsed.name.trim()
-          ? parsed.name.trim()
-          : typeof parsed?.full_name === 'string' && parsed.full_name.trim()
-            ? parsed.full_name.trim()
-            : '';
-      if (n) {
-        return { name: n, hasOverride: true };
-      }
-    }
-  } catch {
-    // تجاهل خطأ القراءة
-  }
-
-  const winId = readWindowNameData();
-  if (winId.name) {
-    return { name: winId.name, hasOverride: true };
-  }
-
-  return { name: '', hasOverride: false };
-}
-
-function writePersistedName(name: string, lastNameChangedAt?: number | null) {
-  const effectiveLock =
-    lastNameChangedAt !== undefined ? lastNameChangedAt : readNameLockTimestamp();
-
-  writeWindowNameData(name, effectiveLock);
-  void writeNameToIDB(name, effectiveLock);
-
-  try {
-    localStorage.setItem(OVERRIDE_NAME_KEY, name);
-    if (typeof effectiveLock === 'number' && effectiveLock > 0) {
-      localStorage.setItem(NAME_LOCK_KEY, String(effectiveLock));
-    }
-
-    const raw = localStorage.getItem(PROFILE_META_KEY);
-    const prevMeta = raw ? JSON.parse(raw) : {};
-    localStorage.setItem(
-      PROFILE_META_KEY,
-      JSON.stringify({
-        ...prevMeta,
-        name,
-        full_name: name,
-        lastNameChangedAt: effectiveLock ?? prevMeta?.lastNameChangedAt ?? null,
-      })
-    );
-  } catch {
-    // تجاهل خطأ التخزين
-  }
-
-  try {
-    window.dispatchEvent(new Event('wasl-profile-updated'));
-  } catch {
-    // تجاهل
-  }
-}
-
 export function WaslHeaderBar({
   activeTab,
   onSelectTab,
   unreadChatsCount = 0,
-  currentUserName = 'بيكا ستور',
+  currentUserName = '',
   userAvatar,
   friends = [],
   stories = [
@@ -468,39 +327,139 @@ export function WaslHeaderBar({
   const [switchAccountsList, setSwitchAccountsList] = useState<SwitchableAccount[]>([]);
   const [switchManageMode, setSwitchManageMode] = useState(false);
 
-  const initialProfile = readPersistedName();
-  const hasOverrideRef = useRef<boolean>(initialProfile.hasOverride);
+  const [currentUid, setCurrentUid] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState<string>(currentUserName || '');
+  const [activeAvatar, setActiveAvatar] = useState<string | undefined>(
+    isValidAvatarUrl(userAvatar) ? userAvatar?.trim() : undefined
+  );
+  const [lastNameChangedAt, setLastNameChangedAt] = useState<number | null>(null);
 
-  const [displayName, setDisplayName] = useState<string>(
-    initialProfile.name || currentUserName
-  );
-  const [lastNameChangedAt, setLastNameChangedAt] = useState<number | null>(() =>
-    readNameLockTimestamp()
-  );
+  const syncedUidRef = useRef<string | null>(null);
+
+  const syncAccountFromSession = async (uid: string | null) => {
+    clearAllLegacyAndCurrentIdentity();
+    setCurrentUid(uid);
+
+    if (!uid) {
+      syncedUidRef.current = null;
+      setDisplayName('');
+      setActiveAvatar(undefined);
+      setLastNameChangedAt(null);
+      return;
+    }
+
+    const scoped = readScopedAccountProfile(uid);
+    if (scoped.name) setDisplayName(scoped.name);
+    if (scoped.avatar) setActiveAvatar(scoped.avatar);
+    if (scoped.lastNameChangedAt) setLastNameChangedAt(scoped.lastNameChangedAt);
+
+    try {
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('full_name, avatar_url')
+        .eq('id', uid)
+        .maybeSingle();
+
+      const { data: authUserRes } = await supabase.auth.getUser();
+      const metaName =
+        typeof authUserRes?.user?.user_metadata?.full_name === 'string'
+          ? authUserRes.user.user_metadata.full_name.trim()
+          : typeof authUserRes?.user?.user_metadata?.name === 'string'
+            ? authUserRes.user.user_metadata.name.trim()
+            : '';
+
+      const resolvedName =
+        (typeof prof?.full_name === 'string' && prof.full_name.trim()) ||
+        metaName ||
+        scoped.name ||
+        currentUserName ||
+        '';
+
+      const resolvedAvatar =
+        (isValidAvatarUrl(prof?.avatar_url) && String(prof?.avatar_url).trim()) ||
+        (isValidAvatarUrl(userAvatar) && String(userAvatar).trim()) ||
+        scoped.avatar ||
+        undefined;
+
+      setDisplayName(resolvedName);
+      setActiveAvatar(resolvedAvatar);
+      syncedUidRef.current = uid;
+
+      if (resolvedName || resolvedAvatar) {
+        writeScopedAccountProfile(uid, {
+          name: resolvedName,
+          avatar: resolvedAvatar,
+        });
+      }
+    } catch {
+      if (!scoped.name && currentUserName) {
+        setDisplayName(currentUserName);
+      }
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!active) return;
+      const uid = data?.session?.user?.id ?? null;
+      await syncAccountFromSession(uid);
+    })();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!active) return;
+      const uid = session?.user?.id ?? null;
+      if (event === 'SIGNED_OUT' || !uid) {
+        void syncAccountFromSession(null);
+      } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
+        void syncAccountFromSession(uid);
+      }
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentUid) return;
+    if (currentUserName && currentUserName !== displayName && !syncedUidRef.current) {
+      setDisplayName(currentUserName);
+    }
+    if (isValidAvatarUrl(userAvatar)) {
+      const cleanAv = userAvatar!.trim();
+      setActiveAvatar(cleanAv);
+      writeScopedAccountProfile(currentUid, { avatar: cleanAv });
+    }
+  }, [currentUid, currentUserName, userAvatar]);
 
   const loadAccountsForSwitcher = async () => {
     const localList = readLocalSavedAccounts();
-    const fallbackCurrent: SwitchableAccount = {
-      id: 'current-user',
-      name: displayName || currentUserName || 'بيكا ستور',
-      avatar: userAvatar,
-      lastUsedAt: Date.now(),
-    };
-
-    const baseList = localList.length > 0 ? localList : [fallbackCurrent];
-    setSwitchAccountsList(baseList);
+    setSwitchAccountsList(localList);
 
     try {
+      const { data: authData } = await supabase.auth.getUser();
+      const authUid = authData?.user?.id;
+      if (!authUid) {
+        setSwitchAccountsList(localList);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('saved_accounts')
         .select('id, name, avatar, phone_or_email, last_used_at')
+        .eq('owner_id', authUid)
         .order('last_used_at', { ascending: false });
 
-      if (!error && Array.isArray(data) && data.length > 0) {
+      if (!error && Array.isArray(data)) {
         const remoteList: SwitchableAccount[] = data.map((row: any) => ({
           id: String(row.id),
           name: String(row.name || 'مستخدم وِصل'),
-          avatar: typeof row.avatar === 'string' && row.avatar ? row.avatar : undefined,
+          avatar: isValidAvatarUrl(row.avatar) ? String(row.avatar).trim() : undefined,
           phoneOrEmail:
             typeof row.phone_or_email === 'string' && row.phone_or_email
               ? row.phone_or_email
@@ -511,10 +470,7 @@ export function WaslHeaderBar({
         const merged = new Map<string, SwitchableAccount>();
         for (const r of remoteList) merged.set(r.id, r);
         for (const l of localList) {
-          const prev = merged.get(l.id);
-          if (!prev || l.lastUsedAt >= prev.lastUsedAt) {
-            merged.set(l.id, { ...prev, ...l, avatar: l.avatar || prev?.avatar });
-          }
+          if (!merged.has(l.id)) merged.set(l.id, l);
         }
         const combined = Array.from(merged.values()).sort((a, b) => b.lastUsedAt - a.lastUsedAt);
         writeLocalSavedAccounts(combined);
@@ -532,6 +488,30 @@ export function WaslHeaderBar({
     onOpenSwitchAccount?.();
   };
 
+  const handleStartFreshAccountOrProfile = async () => {
+    setSwitchModalOpen(false);
+    await syncAccountFromSession(null);
+
+    if (onLogout) {
+      onLogout();
+    } else {
+      await supabase.auth.signOut();
+      window.dispatchEvent(new Event('wasl-auth-reset'));
+    }
+  };
+
+  const handleTriggerLogout = async () => {
+    setDrawerOpen(false);
+    await syncAccountFromSession(null);
+
+    if (onLogout) {
+      onLogout();
+    } else {
+      await supabase.auth.signOut();
+      window.dispatchEvent(new Event('wasl-auth-reset'));
+    }
+  };
+
   useEffect(() => {
     const handleEvent = () => {
       triggerOpenSwitchAccount();
@@ -545,9 +525,17 @@ export function WaslHeaderBar({
   const handlePickAccountFromModal = async (acc: SwitchableAccount) => {
     if (switchManageMode) return;
     const now = Date.now();
-    hasOverrideRef.current = true;
+    const targetUid = acc.id || currentUid;
+
     setDisplayName(acc.name);
-    writePersistedName(acc.name);
+    const nextAvatar = isValidAvatarUrl(acc.avatar) ? acc.avatar : undefined;
+    setActiveAvatar(nextAvatar);
+    if (targetUid) {
+      writeScopedAccountProfile(targetUid, {
+        name: acc.name,
+        avatar: nextAvatar,
+      });
+    }
 
     const updatedList = [
       { ...acc, lastUsedAt: now },
@@ -557,16 +545,21 @@ export function WaslHeaderBar({
     writeLocalSavedAccounts(updatedList);
 
     try {
-      await supabase.from('saved_accounts').upsert(
-        {
-          id: acc.id,
-          name: acc.name,
-          avatar: acc.avatar || null,
-          phone_or_email: acc.phoneOrEmail || null,
-          last_used_at: new Date(now).toISOString(),
-        },
-        { onConflict: 'id' }
-      );
+      const { data: authData } = await supabase.auth.getUser();
+      const authUid = authData?.user?.id;
+      if (authUid) {
+        await supabase.from('saved_accounts').upsert(
+          {
+            id: acc.id,
+            owner_id: authUid,
+            name: acc.name,
+            avatar: nextAvatar || null,
+            phone_or_email: acc.phoneOrEmail || null,
+            last_used_at: new Date(now).toISOString(),
+          },
+          { onConflict: 'id' }
+        );
+      }
     } catch {
       // تجاهل
     }
@@ -586,52 +579,6 @@ export function WaslHeaderBar({
     }
   };
 
-  useEffect(() => {
-    let mounted = true;
-    void (async () => {
-      const current = readPersistedName();
-      const currentLock = readNameLockTimestamp();
-
-      if (current.name || currentLock) {
-        if (mounted) {
-          if (current.name) {
-            hasOverrideRef.current = true;
-            setDisplayName(current.name);
-          }
-          if (currentLock) setLastNameChangedAt(currentLock);
-        }
-        return;
-      }
-
-      const idbId = await readNameFromIDB();
-      if (mounted && idbId && (idbId.name || idbId.lastNameChangedAt)) {
-        if (idbId.name) {
-          hasOverrideRef.current = true;
-          setDisplayName(idbId.name);
-        }
-        if (idbId.lastNameChangedAt) {
-          setLastNameChangedAt(idbId.lastNameChangedAt);
-          writeNameLockTimestamp(idbId.lastNameChangedAt);
-        }
-        writePersistedName(idbId.name || currentUserName, idbId.lastNameChangedAt ?? null);
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, [currentUserName]);
-
-  useEffect(() => {
-    if (hasOverrideRef.current) return;
-    const saved = readPersistedName();
-    if (saved.name) {
-      setDisplayName(saved.name);
-    } else if (currentUserName) {
-      setDisplayName(currentUserName);
-    }
-  }, [currentUserName]);
-
   const [editDetailsOpen, setEditDetailsOpen] = useState(false);
   const [editNameInput, setEditNameInput] = useState('');
   const [editError, setEditError] = useState('');
@@ -646,13 +593,8 @@ export function WaslHeaderBar({
     try {
       const saved = localStorage.getItem(PRIVACY_STORAGE_KEY);
       if (saved !== null) return saved === 'true';
-      const profileRaw = localStorage.getItem(PROFILE_META_KEY);
-      if (profileRaw) {
-        const parsed = JSON.parse(profileRaw);
-        if (typeof parsed?.isPublicAccount === 'boolean') return parsed.isPublicAccount;
-      }
     } catch {
-      // تجاهل خطأ القراءة
+      // تجاهل
     }
     return true;
   });
@@ -680,16 +622,8 @@ export function WaslHeaderBar({
   useEffect(() => {
     try {
       localStorage.setItem(PRIVACY_STORAGE_KEY, String(isPublicAccount));
-      const profileRaw = localStorage.getItem(PROFILE_META_KEY);
-      if (profileRaw) {
-        const parsed = JSON.parse(profileRaw);
-        localStorage.setItem(
-          PROFILE_META_KEY,
-          JSON.stringify({ ...parsed, isPublicAccount })
-        );
-      }
     } catch {
-      // تجاهل خطأ التخزين
+      // تجاهل
     }
   }, [isPublicAccount]);
 
@@ -722,9 +656,7 @@ export function WaslHeaderBar({
   const lockInfo = getNameCooldownInfo(lastNameChangedAt);
 
   const openEditDetailsModal = () => {
-    const saved = readPersistedName();
-    const currentN = saved.name || displayName;
-    setEditNameInput(currentN);
+    setEditNameInput(displayName);
     setEditError('');
     setEditDetailsOpen(true);
   };
@@ -738,8 +670,7 @@ export function WaslHeaderBar({
     }
 
     const nameChanged = cleanedName !== displayName.trim();
-    const currentLockTs = readNameLockTimestamp() ?? lastNameChangedAt;
-    const currentLockState = getNameCooldownInfo(currentLockTs);
+    const currentLockState = getNameCooldownInfo(lastNameChangedAt);
 
     if (nameChanged && currentLockState.isLocked) {
       setEditError(
@@ -750,52 +681,57 @@ export function WaslHeaderBar({
 
     setSavingDetails(true);
     try {
-      let nextLockTs = currentLockTs;
+      let nextLockTs = lastNameChangedAt;
       if (nameChanged) {
         nextLockTs = Date.now();
         setLastNameChangedAt(nextLockTs);
-        writeNameLockTimestamp(nextLockTs);
       }
 
-      hasOverrideRef.current = true;
       setDisplayName(cleanedName);
-      writePersistedName(cleanedName, nextLockTs);
+      const resolvedAvatar = isValidAvatarUrl(userAvatar)
+        ? userAvatar!.trim()
+        : activeAvatar;
 
-      try {
-        const { data: userData } = await supabase.auth.getUser();
-        const uid = userData?.user?.id;
-        if (uid) {
-          await supabase
-            .from('profiles')
-            .upsert(
-              {
-                id: uid,
-                full_name: cleanedName,
-                updated_at: new Date().toISOString(),
-              },
-              { onConflict: 'id' }
-            );
-          await supabase
-            .from('saved_accounts')
-            .upsert(
-              {
-                id: uid,
-                owner_id: uid,
-                name: cleanedName,
-                avatar: userAvatar || null,
-                last_used_at: new Date().toISOString(),
-              },
-              { onConflict: 'id' }
-            );
-        }
-      } catch {
-        // تجاهل خطأ الشبكة
+      const { data: userData } = await supabase.auth.getUser();
+      const uid = userData?.user?.id || currentUid;
+
+      if (uid) {
+        writeScopedAccountProfile(uid, {
+          name: cleanedName,
+          avatar: resolvedAvatar,
+          lastNameChangedAt: nextLockTs,
+        });
+
+        await supabase
+          .from('profiles')
+          .upsert(
+            {
+              id: uid,
+              full_name: cleanedName,
+              avatar_url: resolvedAvatar || null,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'id' }
+          );
+
+        await supabase
+          .from('saved_accounts')
+          .upsert(
+            {
+              id: uid,
+              owner_id: uid,
+              name: cleanedName,
+              avatar: resolvedAvatar || null,
+              last_used_at: new Date().toISOString(),
+            },
+            { onConflict: 'id' }
+          );
       }
 
       setEditDetailsOpen(false);
       showTempNotice(
         nameChanged
-          ? `تم حفظ الاسم بشكل دائم ولن يُحذف، ويمكنك تغييره مجدداً بعد ${NAME_COOLDOWN_DAYS} أيام`
+          ? `تم حفظ الاسم لهذا الحساب ويمكنك تغييره مجدداً بعد ${NAME_COOLDOWN_DAYS} أيام`
           : 'تم حفظ بيانات الحساب بنجاح'
       );
     } finally {
@@ -932,7 +868,7 @@ export function WaslHeaderBar({
   const uploadPostImageToStorage = async (file: File, fallbackUrl: string): Promise<string> => {
     try {
       const { data: userData } = await supabase.auth.getUser();
-      const uid = userData?.user?.id || 'guest';
+      const uid = userData?.user?.id || currentUid || 'guest';
       const ext = (file.name.split('.').pop() || 'jpg').replace(/[^a-zA-Z0-9]/g, '');
       const path = `posts/${uid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext || 'jpg'}`;
 
@@ -961,12 +897,13 @@ export function WaslHeaderBar({
       }
 
       const { data: userData } = await supabase.auth.getUser();
-      const userId = userData?.user?.id ?? null;
+      const userId = userData?.user?.id ?? currentUid ?? null;
+      const authorLabel = displayName || currentUserName || 'مستخدم وِصل';
 
       await supabase.from('posts').insert({
         user_id: userId,
-        author_name: displayName,
-        headline: finalImageUrl ? `نشر ${displayName} صورة` : `نشر ${displayName}`,
+        author_name: authorLabel,
+        headline: finalImageUrl ? `نشر ${authorLabel} صورة` : `نشر ${authorLabel}`,
         content: finalContent || null,
         image_url: finalImageUrl || null,
         kind: finalImageUrl ? 'photo' : 'post',
@@ -1068,6 +1005,9 @@ export function WaslHeaderBar({
   const qSettings = settingsSearch.trim().toLowerCase();
   const matchSettingsItem = (label: string) =>
     !qSettings || label.toLowerCase().includes(qSettings);
+
+  const effectiveName = displayName || currentUserName || 'حساب وِصل';
+  const effectiveAvatar = activeAvatar || (isValidAvatarUrl(userAvatar) ? userAvatar?.trim() : undefined);
 
   return (
     <div dir="rtl" className="w-full bg-slate-950 text-slate-100 select-none">
@@ -1238,15 +1178,15 @@ export function WaslHeaderBar({
       {activeTab === 'feed' && (
         <>
           <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-slate-900">
-            {userAvatar ? (
+            {effectiveAvatar ? (
               <img
-                src={userAvatar}
-                alt={displayName}
+                src={effectiveAvatar}
+                alt={effectiveName}
                 className="h-10 w-10 shrink-0 rounded-full object-cover border border-cyan-500/35"
               />
             ) : (
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 border border-purple-500/30 text-sm font-black text-cyan-300">
-                {displayName.slice(0, 1)}
+                {effectiveName.slice(0, 1)}
               </div>
             )}
 
@@ -1381,19 +1321,19 @@ export function WaslHeaderBar({
 
               <div className="px-4 pt-3.5 pb-2">
                 <div className="flex items-center gap-3">
-                  {userAvatar ? (
+                  {effectiveAvatar ? (
                     <img
-                      src={userAvatar}
-                      alt={displayName}
+                      src={effectiveAvatar}
+                      alt={effectiveName}
                       className="h-11 w-11 shrink-0 rounded-full border border-white/15 object-cover"
                     />
                   ) : (
                     <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-800 text-sm font-bold text-white border border-white/15">
-                      {displayName.slice(0, 1)}
+                      {effectiveName.slice(0, 1)}
                     </div>
                   )}
                   <div>
-                    <p className="text-sm font-bold text-white leading-tight">{displayName}</p>
+                    <p className="text-sm font-bold text-white leading-tight">{effectiveName}</p>
                     <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-white/15 bg-[#2a2b30] px-2 py-0.5 text-[11px] font-semibold text-slate-200">
                       <span>{isPublicAccount ? 'العامة' : 'خاص'}</span>
                       <span>▾</span>
@@ -1593,7 +1533,7 @@ export function WaslHeaderBar({
             <div className="space-y-3">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-black text-white">{displayName}</p>
+                  <p className="truncate text-sm font-black text-white">{effectiveName}</p>
                 </div>
                 <button
                   type="button"
@@ -1727,14 +1667,7 @@ export function WaslHeaderBar({
 
               <button
                 type="button"
-                onClick={() => {
-                  setDrawerOpen(false);
-                  if (onLogout) {
-                    onLogout();
-                  } else {
-                    void supabase.auth.signOut();
-                  }
-                }}
+                onClick={() => void handleTriggerLogout()}
                 className="shrink-0 w-full flex items-center justify-between rounded-xl border border-rose-500/35 bg-rose-950/35 px-3.5 py-2.5 text-xs font-bold text-rose-300 hover:bg-rose-950/55 transition"
               >
                 <span>تسجيل الخروج</span>
@@ -1792,60 +1725,59 @@ export function WaslHeaderBar({
                 </p>
               </div>
             ) : (
-              switchAccountsList.map((acc) => (
-                <div
-                  key={acc.id}
-                  onClick={() => void handlePickAccountFromModal(acc)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') void handlePickAccountFromModal(acc);
-                  }}
-                  className="flex items-center justify-between rounded-2xl border border-white/15 bg-[#242526] px-4 py-3.5 shadow-sm hover:bg-[#2d2f31] active:scale-[0.99] transition cursor-pointer"
-                >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    {acc.avatar ? (
-                      <img
-                        src={acc.avatar}
-                        alt={acc.name}
-                        className="h-12 w-12 shrink-0 rounded-full object-cover border border-white/15"
-                      />
-                    ) : (
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#3a3b3c] text-lg font-black text-slate-200">
-                        {acc.name.slice(0, 1)}
-                      </div>
-                    )}
-                    <span className="truncate text-sm font-bold text-white">{acc.name}</span>
-                  </div>
+              switchAccountsList.map((acc) => {
+                const avatarSrc = isValidAvatarUrl(acc.avatar) ? acc.avatar : undefined;
+                return (
+                  <div
+                    key={acc.id}
+                    onClick={() => void handlePickAccountFromModal(acc)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') void handlePickAccountFromModal(acc);
+                    }}
+                    className="flex items-center justify-between rounded-2xl border border-white/15 bg-[#242526] px-4 py-3.5 shadow-sm hover:bg-[#2d2f31] active:scale-[0.99] transition cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3.5 min-w-0">
+                      {avatarSrc ? (
+                        <img
+                          src={avatarSrc}
+                          alt={acc.name}
+                          className="h-12 w-12 shrink-0 rounded-full object-cover border border-white/15"
+                        />
+                      ) : (
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#3a3b3c] text-lg font-black text-slate-200">
+                          {acc.name.slice(0, 1)}
+                        </div>
+                      )}
+                      <span className="truncate text-sm font-bold text-white">{acc.name}</span>
+                    </div>
 
-                  {switchManageMode ? (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleDeleteAccountFromModal(acc.id);
-                      }}
-                      aria-label={`إزالة ${acc.name}`}
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 transition"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  ) : (
-                    <ChevronLeft size={20} className="shrink-0 text-slate-400" />
-                  )}
-                </div>
-              ))
+                    {switchManageMode ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDeleteAccountFromModal(acc.id);
+                        }}
+                        aria-label={`إزالة ${acc.name}`}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500/15 text-rose-400 hover:bg-rose-500/25 transition"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    ) : (
+                      <ChevronLeft size={20} className="shrink-0 text-slate-400" />
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
 
           <div className="mx-auto w-full max-w-md px-4 pt-3 pb-6 space-y-3">
             <button
               type="button"
-              onClick={() => {
-                setSwitchModalOpen(false);
-                if (onLogout) onLogout();
-                else void supabase.auth.signOut();
-              }}
+              onClick={() => void handleStartFreshAccountOrProfile()}
               className="w-full rounded-full bg-[#2d2f31] py-3 text-xs font-extrabold text-white hover:bg-[#383a3d] transition"
             >
               استخدام ملف شخصي آخر
@@ -1853,11 +1785,7 @@ export function WaslHeaderBar({
 
             <button
               type="button"
-              onClick={() => {
-                setSwitchModalOpen(false);
-                if (onLogout) onLogout();
-                else void supabase.auth.signOut();
-              }}
+              onClick={() => void handleStartFreshAccountOrProfile()}
               className="w-full rounded-full border border-[#3b82f6] bg-transparent py-3 text-xs font-extrabold text-[#4599FF] hover:bg-[#3b82f6]/10 transition"
             >
               إنشاء حساب جديد
@@ -1950,7 +1878,7 @@ export function WaslHeaderBar({
                       <UserCog size={18} className="text-cyan-400 shrink-0" />
                       <span>التفاصيل الشخصية</span>
                     </span>
-                    <span className="text-[11px] font-bold text-cyan-400">{displayName}</span>
+                    <span className="text-[11px] font-bold text-cyan-400">{effectiveName}</span>
                   </button>
                 )}
 
@@ -1988,7 +1916,7 @@ export function WaslHeaderBar({
                 {matchSettingsItem('التحقق') && (
                   <button
                     type="button"
-                    onClick={() => showTempNotice('حالة الحساب موثّقة محلياً في وِصل')}
+                    onClick={() => showTempNotice('حالة الحساب موثّقة في وِصل')}
                     className="flex w-full items-center justify-between text-right py-1 hover:opacity-85 transition"
                   >
                     <span className="flex items-center gap-3 text-xs font-bold text-slate-200">
@@ -2123,7 +2051,7 @@ export function WaslHeaderBar({
                         localStorage.removeItem(PRIVACY_STORAGE_KEY);
                         localStorage.removeItem(DARK_MODE_STORAGE_KEY);
                         localStorage.removeItem(LANG_STORAGE_KEY);
-                        showTempNotice('تم مسح الكاش المؤقت والاسم الدائم محفوظ');
+                        showTempNotice('تم مسح الكاش المؤقت وبيانات الحساب محفوظة');
                       } catch {
                         showTempNotice('تعذر مسح الكاش الآن');
                       }
@@ -2131,7 +2059,7 @@ export function WaslHeaderBar({
                     className="flex w-full items-center gap-3 rounded-xl bg-[#242526] border border-white/10 px-3.5 py-3 text-right text-xs font-bold text-rose-300 hover:bg-white/5 transition"
                   >
                     <Trash2 size={18} className="text-rose-400 shrink-0" />
-                    <span>مسح الكاش المؤقت (الاسم محفوظ دائماً)</span>
+                    <span>مسح الكاش المؤقت</span>
                   </button>
                 )}
               </div>
@@ -2192,7 +2120,7 @@ export function WaslHeaderBar({
                   setEditError('');
                   setEditNameInput(e.target.value);
                 }}
-                placeholder="مثال: بيكا ستور"
+                placeholder="اكتب اسمك..."
                 className="w-full rounded-xl border border-white/15 bg-[#18191a] px-3.5 py-2.5 text-xs font-bold text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none disabled:opacity-55 disabled:cursor-not-allowed"
               />
             </div>
