@@ -1,7 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import ChatList from './ChatList';
 import ChatWindow from './ChatWindow';
+
+interface OpenChatEventDetail {
+  userId?: string;
+  userName?: string;
+  avatar?: string;
+}
 
 export default function ChatsTab() {
   const { openConversation } = useAppStore();
@@ -13,6 +19,22 @@ export default function ChatsTab() {
     openConversation(id);
     setMobileView('chat');
   };
+
+  useEffect(() => {
+    const onOpenChatEvent = (event: Event) => {
+      const customEvent = event as CustomEvent<OpenChatEventDetail>;
+      const targetId = customEvent.detail?.userId;
+      if (targetId) {
+        openConversation(targetId);
+        setMobileView('chat');
+      }
+    };
+
+    window.addEventListener('wasl-open-chat', onOpenChatEvent);
+    return () => {
+      window.removeEventListener('wasl-open-chat', onOpenChatEvent);
+    };
+  }, [openConversation]);
 
   return (
     <div className="mx-auto flex h-[calc(100vh-8rem)] max-w-6xl overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/70">
