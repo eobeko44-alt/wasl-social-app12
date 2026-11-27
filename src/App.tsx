@@ -1,4 +1,4 @@
-import React, { Component, useEffect, useRef, useState, useTransition } from 'react';
+import React, { Component, useEffect, useRef, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
@@ -167,7 +167,6 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
   const [tab, setTab] = useState<Tab>('feed');
-  const [_isPending, startTransition] = useTransition();
   const [composerOpen, setComposerOpen] = useState(false);
   const [activeUserName, setActiveUserName] = useState<string>('');
   const [activeUserAvatar, setActiveUserAvatar] = useState<string>('');
@@ -180,9 +179,7 @@ export default function App() {
   const addPost = store.addPost;
 
   const handleSelectTab = (nextTab: Tab) => {
-    startTransition(() => {
-      setTab(nextTab);
-    });
+    setTab(nextTab);
   };
 
   const displayName =
