@@ -9,6 +9,7 @@ export interface PersistentMessage {
 }
 
 const LOCAL_MSG_PREFIX = 'wasl_messages_cache_v1_';
+const MAX_CACHED_MESSAGES = 80;
 
 function getCacheKey(userA: string, userB: string): string {
   const pair = [userA, userB].sort().join('__');
@@ -34,7 +35,11 @@ export function writeCachedMessages(
 ): void {
   if (!userA || !userB) return;
   try {
-    localStorage.setItem(getCacheKey(userA, userB), JSON.stringify(messages));
+    const trimmed =
+      messages.length > MAX_CACHED_MESSAGES
+        ? messages.slice(messages.length - MAX_CACHED_MESSAGES)
+        : messages;
+    localStorage.setItem(getCacheKey(userA, userB), JSON.stringify(trimmed));
   } catch {
     // تجاهل خطأ التخزين المحلي
   }
@@ -42,9 +47,9 @@ export function writeCachedMessages(
 
 export async function getCurrentAuthUserId(): Promise<string | null> {
   try {
-    const { data, error } = await supabase.auth.getUser();
+    const { data, error } = await supabase.auth.getSession();
     if (error) return null;
-    return data?.user?.id ?? null;
+    return data?.session?.user?.id ?? null;
   } catch {
     return null;
   }
@@ -65,7 +70,8 @@ export async function fetchConversationMessages(
       .or(
         `and(sender_id.eq.${currentUserId},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${currentUserId})`
       )
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: true })
+      .limit(60);
 
     if (error || !Array.isArray(data)) {
       return cached;
@@ -118,9 +124,9 @@ export async function sendPersistentMessage(params: {
 
     const created = data as PersistentMessage;
     const currentCache = readCachedMessages(params.senderId, params.receiverId);
-    const exists = currentCache.some((m) => m.id === created.id);
-    const nextCache = exists ? currentCache : [...currentCache, created];
-    writeCachedMessages(params.senderId, params.receiverId, nextCache);
+    if (!currentCache.some((m) => m.id === created.id)) {
+      writeCachedMessages(params.senderId, params.receiverId, [...currentCache, created]);
+    }
 
     return { message: created };
   } catch {
