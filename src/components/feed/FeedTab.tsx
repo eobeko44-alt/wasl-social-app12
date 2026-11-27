@@ -1,704 +1,463 @@
-import React, { useEffect, useRef, useState } from 'react';
-import {
-  Users,
-  ImagePlus,
-  ArrowRight,
-  Music,
-  UserPlus,
-  MapPin,
-  Smile,
-  MessageCircle,
-  Calendar,
-  Video,
-  ChevronLeft,
-  X,
-} from 'lucide-react';
-import { useAppStore } from '@/store/useAppStore';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Heart, MessageCircle, Share2, Trash2, Send, RefreshCw } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import UserCard from '@/components/UserCard';
-import PostCard from './PostCard';
+import { useAppStore } from '@/store/useAppStore';
 
-const MEDIA_BUCKET = 'wasl-media';
-
-interface CloudPostRecord {
+interface FeedPostItem {
   id: string;
-  user_id?: string | null;
-  author_name?: string | null;
-  author_handle?: string | null;
-  content?: string | null;
-  headline?: string | null;
-  image_url?: string | null;
-  kind?: string | null;
-  created_at?: string | null;
+  dbId?: string;
+  userId?: string | null;
+  authorName: string;
+  authorHandle?: string;
+  authorAvatar?: string;
+  headline?: string;
+  content: string;
+  imageUrl?: string;
+  createdAt: string;
+  likesCount: number;
+  likedByMe: boolean;
+  comments: { id: string; author: string; text: string; createdAt: string }[];
 }
 
-const BG_THEMES = [
-  { id: 'none', label: 'افتراضي', className: 'bg-transparent text-white' },
-  {
-    id: 'sunset',
-    label: 'غروب',
-    className:
-      'bg-gradient-to-br from-amber-500 via-orange-500 to-pink-600 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
-  },
-  {
-    id: 'violet',
-    label: 'بنفسجي',
-    className:
-      'bg-gradient-to-br from-purple-500 to-indigo-600 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
-  },
-  {
-    id: 'berry',
-    label: 'توتي',
-    className:
-      'bg-gradient-to-br from-pink-600 via-rose-600 to-purple-700 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
-  },
-  {
-    id: 'dark',
-    label: 'داكن',
-    className:
-      'bg-slate-950 text-white rounded-2xl p-4 min-h-[135px] flex items-center border border-slate-700',
-  },
-  {
-    id: 'crimson',
-    label: 'قرمزي',
-    className:
-      'bg-gradient-to-br from-rose-600 to-red-700 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
-  },
-  {
-    id: 'neon',
-    label: 'نيون',
-    className:
-      'bg-gradient-to-br from-fuchsia-600 to-purple-700 text-white rounded-2xl p-4 min-h-[135px] flex items-center',
-  },
-  {
-    id: 'light',
-    label: 'أبيض',
-    className: 'bg-white text-slate-900 rounded-2xl p-4 min-h-[135px] flex items-center',
-  },
-];
+let cachedFeedPosts: FeedPostItem[] | null = null;
+let lastFeedFetchedAt = 0;
+const FEED_CACHE_TTL_MS = 20_000;
 
-const SWATCH_COLORS: Record<string, string> = {
-  none: 'bg-slate-800 border border-slate-600',
-  sunset: 'bg-gradient-to-tr from-amber-500 to-pink-500',
-  violet: 'bg-purple-500',
-  berry: 'bg-gradient-to-tr from-pink-600 to-purple-700',
-  dark: 'bg-black border border-slate-600',
-  crimson: 'bg-rose-600',
-  neon: 'bg-fuchsia-600',
-  light: 'bg-white',
-};
+function formatRelativeTime(iso?: string): string {
+  if (!iso) return 'الآن';
+  const ts = new Date(iso).getTime();
+  if (Number.isNaN(ts)) return 'الآن';
+  const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (diffSec < 45) return 'الآن';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `منذ ${diffMin} د`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `منذ ${diffHr} س`;
+  const diffDay = Math.floor(diffHr / 24);
+  return `منذ ${diffDay} ي`;
+}
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-    reader.onerror = () => resolve('');
-    reader.readAsDataURL(file);
-  });
+function normalizeRow(row: any, currentUid: string | null): FeedPostItem {
+  const rawId = String(row?.id ?? `row-${Math.random().toString(36).slice(2, 8)}`);
+  const name =
+    typeof row?.author_name === 'string' && row.author_name.trim()
+      ? row.author_name.trim()
+      : 'مستخدم وِصل';
+  const handle =
+    typeof row?.author_handle === 'string' && row.author_handle.trim()
+      ? row.author_handle.trim()
+      : undefined;
+
+  return {
+    id: `cloud-${rawId}`,
+    dbId: rawId,
+    userId: row?.user_id ? String(row.user_id) : null,
+    authorName: name,
+    authorHandle: handle,
+    authorAvatar:
+      typeof row?.author_avatar === 'string' && row.author_avatar.trim()
+        ? row.author_avatar.trim()
+        : undefined,
+    headline: typeof row?.headline === 'string' ? row.headline : undefined,
+    content: typeof row?.content === 'string' ? row.content : '',
+    imageUrl:
+      typeof row?.image_url === 'string' && row.image_url.trim()
+        ? row.image_url.trim()
+        : undefined,
+    createdAt: formatRelativeTime(row?.created_at),
+    likesCount: typeof row?.likes_count === 'number' ? row.likes_count : 0,
+    likedByMe: Boolean(currentUid && Array.isArray(row?.liked_by) && row.liked_by.includes(currentUid)),
+    comments: Array.isArray(row?.comments) ? row.comments : [],
+  };
 }
 
 export default function FeedTab() {
-  const store = useAppStore() as Record<string, any>;
-  const storePosts: Array<Record<string, any>> = Array.isArray(store.posts) ? store.posts : [];
-  const discoverPeople: Array<Record<string, any>> = Array.isArray(store.discoverPeople)
-    ? store.discoverPeople
-    : [];
-  const addFriend = typeof store.addFriend === 'function' ? store.addFriend : () => {};
-  const addContact = typeof store.addContact === 'function' ? store.addContact : () => {};
-  const startConversationWith =
-    typeof store.startConversationWith === 'function' ? store.startConversationWith : () => {};
+  const store = useAppStore();
+  const storePosts = useMemo(() => (Array.isArray(store.posts) ? store.posts : []), [store.posts]);
+  const currentUserName =
+    (typeof store.profile?.name === 'string' && store.profile.name.trim()) || 'حساب وِصل';
 
-  const currentProfile = store.profile || {};
-  const displayName =
-    currentProfile.name && currentProfile.name !== 'أنت'
-      ? String(currentProfile.name)
-      : 'مستخدم وِصل';
-  const rawHandle = currentProfile.username || '@wasl_user';
-  const displayHandle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
+  const [posts, setPosts] = useState<FeedPostItem[]>(() => cachedFeedPosts || []);
+  const [loading, setLoading] = useState<boolean>(() => !cachedFeedPosts);
+  const [refreshing, setRefreshing] = useState(false);
+  const [currentUid, setCurrentUid] = useState<string | null>(null);
+  const [openCommentsId, setOpenCommentsId] = useState<string | null>(null);
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [notice, setNotice] = useState('');
 
-  const [cloudPosts, setCloudPosts] = useState<Array<Record<string, any>>>([]);
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [postText, setPostText] = useState('');
-  const [selectedTheme, setSelectedTheme] = useState<string>('none');
-  const [activeExtraType, setActiveExtraType] = useState<string | null>(null);
-  const [extraValue, setExtraValue] = useState('');
-  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string>('');
-  const [publishing, setPublishing] = useState(false);
-  const [statusNotice, setStatusNotice] = useState<string>('');
-
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const themeStripRef = useRef<HTMLDivElement | null>(null);
-
-  const mapCloudRowToPost = (row: CloudPostRecord): Record<string, any> => {
-    const textBody = row.content ? String(row.content) : row.headline ? String(row.headline) : '';
-    const imgUrl = row.image_url ? String(row.image_url) : undefined;
-    const authorNameStr = String(row.author_name || 'مستخدم وصل');
-    const rawUser = String(row.author_handle || '@wasl_user');
-    const authorHandleStr = rawUser.startsWith('@') ? rawUser : `@${rawUser}`;
-
-    return {
-      id: `cloud-${String(row.id)}`,
-      dbId: String(row.id),
-      userId: row.user_id || undefined,
-      author: {
-        id: String(row.user_id || row.id),
-        name: authorNameStr,
-        username: authorHandleStr,
-        avatar: '',
-        isOnline: false,
-      },
-      authorName: authorNameStr,
-      authorHandle: authorHandleStr,
-      text: textBody,
-      content: textBody,
-      image: imgUrl,
-      imageUrl: imgUrl,
-      likes: 0,
-      likedByMe: false,
-      comments: [],
-      createdAt: row.created_at
-        ? new Date(String(row.created_at)).toLocaleDateString('ar')
-        : 'الآن',
-    };
-  };
-
-  const fetchGlobalPosts = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('posts')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-      if (!error && Array.isArray(data)) {
-        setCloudPosts((data as CloudPostRecord[]).map(mapCloudRowToPost));
-      }
-    } catch {
-      // يظل العرض المحلي شغالاً
-    }
-  };
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    void fetchGlobalPosts();
-
-    const channel = supabase
-      .channel('wasl-global-posts-feed')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'posts',
-        },
-        (payload) => {
-          const row = payload.new as CloudPostRecord | undefined;
-          if (!row?.id) return;
-          const mapped = mapCloudRowToPost(row);
-          setCloudPosts((prev) => {
-            const exists = prev.some(
-              (item) => item.id === mapped.id || (item.dbId && item.dbId === mapped.dbId)
-            );
-            return exists ? prev : [mapped, ...prev];
-          });
-        }
-      )
-      .subscribe();
-
-    const { data: authSub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session?.user) {
-        setComposerOpen(false);
-        setPostText('');
-        setSelectedImageFile(null);
-        setImagePreview('');
-        setActiveExtraType(null);
-        setExtraValue('');
-      } else {
-        void fetchGlobalPosts();
-      }
-    });
-
+    mountedRef.current = true;
     return () => {
-      authSub.subscription.unsubscribe();
-      void supabase.removeChannel(channel);
+      mountedRef.current = false;
     };
   }, []);
 
-  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0] || null;
-    if (!file) return;
-    const preview = await readFileAsDataUrl(file);
-    setSelectedImageFile(file);
-    setImagePreview(preview);
-    setSelectedTheme('none');
-    setComposerOpen(true);
-    e.target.value = '';
-  };
-
-  const uploadPostMedia = async (file: File, fallbackUrl: string): Promise<string> => {
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      const uid = userData?.user?.id;
-      if (!uid) return fallbackUrl;
-      const ext = (file.name.split('.').pop() || 'jpg').replace(/[^a-zA-Z0-9]/g, '');
-      const path = `feed/${uid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext || 'jpg'}`;
-
-      const { error } = await supabase.storage
-        .from(MEDIA_BUCKET)
-        .upload(path, file, { upsert: false });
-
-      if (error) return fallbackUrl;
-
-      const { data: publicInfo } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(path);
-      return publicInfo?.publicUrl || fallbackUrl;
-    } catch {
-      return fallbackUrl;
-    }
-  };
-
-  const buildFinalContent = (): string => {
-    const main = postText.trim();
-    const detail = extraValue.trim();
-    if (!activeExtraType || !detail) return main;
-
-    const prefixMap: Record<string, string> = {
-      music: '🎵 يستمع إلى:',
-      tag: '👥 مع:',
-      location: '📍 في:',
-      feeling: '😊 يشعر بـ:',
-      messages: '💬 رسالة:',
-      event: '📅 مناسبة:',
-      live: '🔴 بث:',
-    };
-    const prefix = prefixMap[activeExtraType] || '';
-    const extraLine = `${prefix} ${detail}`.trim();
-    return main ? `${main}\n${extraLine}` : extraLine;
-  };
-
-  const resetComposerFields = () => {
-    setPostText('');
-    setSelectedImageFile(null);
-    setImagePreview('');
-    setSelectedTheme('none');
-    setActiveExtraType(null);
-    setExtraValue('');
-  };
-
-  const executePublish = async () => {
-    const trimmed = buildFinalContent();
-    if ((!trimmed && !imagePreview) || publishing) return;
-
-    setPublishing(true);
-    setStatusNotice('');
-
-    try {
-      let finalImageUrl: string | undefined = imagePreview || undefined;
-      if (selectedImageFile && imagePreview) {
-        finalImageUrl = await uploadPostMedia(selectedImageFile, imagePreview);
+  const fetchPosts = useCallback(async (force = false) => {
+    if (!force && cachedFeedPosts && Date.now() - lastFeedFetchedAt < FEED_CACHE_TTL_MS) {
+      if (mountedRef.current) {
+        setPosts(cachedFeedPosts);
+        setLoading(false);
       }
+      return;
+    }
 
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData?.user?.id ?? null;
+    if (mountedRef.current) {
+      if (!cachedFeedPosts) setLoading(true);
+      else setRefreshing(true);
+    }
 
-      const { data: inserted, error } = await supabase
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData?.session?.user?.id ?? null;
+      if (mountedRef.current) setCurrentUid(uid);
+
+      const { data, error } = await supabase
         .from('posts')
-        .insert({
-          user_id: userId,
-          author_name: displayName,
-          author_handle: displayHandle,
-          headline: finalImageUrl ? `نشر ${displayName} صورة` : `نشر ${displayName}`,
-          content: trimmed || null,
-          image_url: finalImageUrl || null,
-          kind: finalImageUrl ? 'photo' : 'post',
-        })
-        .select()
-        .single();
+        .select('id, user_id, author_name, author_handle, headline, content, image_url, created_at')
+        .order('created_at', { ascending: false })
+        .limit(20);
 
-      const localPost: Record<string, any> = {
-        id: inserted?.id ? `cloud-${String(inserted.id)}` : `local-feed-${Date.now()}`,
-        dbId: inserted?.id ? String(inserted.id) : undefined,
-        author: {
-          id: userId || 'me',
-          name: displayName,
-          username: displayHandle,
-          avatar: currentProfile.avatar || '',
-          isOnline: true,
-        },
-        authorName: displayName,
-        authorHandle: displayHandle,
-        text: trimmed,
-        content: trimmed,
-        image: finalImageUrl,
-        imageUrl: finalImageUrl,
-        likes: 0,
-        likedByMe: false,
-        comments: [],
-        createdAt: 'الآن',
-      };
+      if (!mountedRef.current) return;
 
-      if (!error && inserted?.id) {
-        setCloudPosts((prev) =>
-          prev.some((p) => p.id === localPost.id) ? prev : [localPost, ...prev]
-        );
-        setStatusNotice('تم نشر المنشور وحفظه في السحابة');
-      } else {
-        setStatusNotice('تمت إضافة المنشور محلياً');
+      if (!error && Array.isArray(data)) {
+        const normalized = data.map((row) => normalizeRow(row, uid));
+        cachedFeedPosts = normalized;
+        lastFeedFetchedAt = Date.now();
+        setPosts(normalized);
       }
-
-      if (typeof store.addPost === 'function') {
-        store.addPost(localPost);
-      }
-
-      resetComposerFields();
-      setComposerOpen(false);
     } catch {
-      setStatusNotice('تعذر نشر المنشور الآن');
+      // الاحتفاظ بالمنشورات الحالية عند تعذر الاتصال
     } finally {
-      setPublishing(false);
-      setTimeout(() => {
-        setStatusNotice('');
-      }, 2500);
+      if (mountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  };
+  }, []);
 
-  const mergedPosts = (() => {
-    const seen = new Set<string>();
-    const combined: Array<Record<string, any>> = [];
+  useEffect(() => {
+    void fetchPosts(false);
+  }, [fetchPosts]);
 
-    for (const item of [...cloudPosts, ...storePosts]) {
-      const key = String(item.dbId || item.id || '');
-      if (key && seen.has(key)) continue;
-      if (key) seen.add(key);
-      combined.push(item);
+  // دمج منشورات المتجر المحلية الجديدة فوراً مع منشورات السحابة بدون تكرار
+  const mergedPosts = useMemo(() => {
+    const localMapped: FeedPostItem[] = storePosts.map((p: any, idx: number) => ({
+      id: String(p?.id || `local-${idx}`),
+      dbId: p?.dbId ? String(p.dbId) : undefined,
+      userId: p?.userId ? String(p.userId) : currentUid,
+      authorName:
+        (typeof p?.authorName === 'string' && p.authorName.trim()) || currentUserName,
+      authorHandle:
+        typeof p?.authorHandle === 'string' && p.authorHandle.trim()
+          ? p.authorHandle.trim()
+          : undefined,
+      authorAvatar:
+        typeof p?.authorAvatar === 'string' && p.authorAvatar.trim()
+          ? p.authorAvatar.trim()
+          : undefined,
+      headline: typeof p?.headline === 'string' ? p.headline : undefined,
+      content: typeof p?.content === 'string' ? p.content : '',
+      imageUrl:
+        (typeof p?.imageUrl === 'string' && p.imageUrl.trim()) ||
+        (typeof p?.image === 'string' && p.image.trim()) ||
+        undefined,
+      createdAt: typeof p?.createdAt === 'string' && p.createdAt ? p.createdAt : 'الآن',
+      likesCount: typeof p?.likesCount === 'number' ? p.likesCount : 0,
+      likedByMe: Boolean(p?.likedByMe),
+      comments: Array.isArray(p?.comments) ? p.comments : [],
+    }));
+
+    const seenContentAndImg = new Set<string>();
+    const combined: FeedPostItem[] = [];
+
+    for (const item of localMapped) {
+      const key = `${item.authorName}|${item.content.trim()}|${item.imageUrl || ''}`;
+      if (!seenContentAndImg.has(key)) {
+        seenContentAndImg.add(key);
+        combined.push(item);
+      }
+    }
+
+    for (const item of posts) {
+      const key = `${item.authorName}|${item.content.trim()}|${item.imageUrl || ''}`;
+      if (!seenContentAndImg.has(key)) {
+        seenContentAndImg.add(key);
+        combined.push(item);
+      }
     }
 
     return combined;
-  })();
+  }, [storePosts, posts, currentUid, currentUserName]);
 
-  const canSubmit = Boolean(buildFinalContent() || imagePreview) && !publishing;
-  const activeThemeObj = BG_THEMES.find((t) => t.id === selectedTheme) || BG_THEMES[0];
-  const isLightTheme = selectedTheme === 'light';
+  const handleToggleLike = (postId: string) => {
+    const updater = (list: FeedPostItem[]) =>
+      list.map((p) => {
+        if (p.id !== postId) return p;
+        const nextLiked = !p.likedByMe;
+        const nextCount = Math.max(0, p.likesCount + (nextLiked ? 1 : -1));
+        return { ...p, likedByMe: nextLiked, likesCount: nextCount };
+      });
 
-  const composerOptions = [
-    {
-      id: 'media',
-      label: 'صور/مقاطع فيديو',
-      icon: <ImagePlus size={18} className="text-emerald-400" />,
-      onClick: () => fileInputRef.current?.click(),
-    },
-    {
-      id: 'music',
-      label: 'الموسيقى',
-      icon: <Music size={18} className="text-pink-400" />,
-      onClick: () => {
-        setActiveExtraType('music');
-        setExtraValue('');
-      },
-    },
-    {
-      id: 'tag',
-      label: 'إشارة إلى الأشخاص',
-      icon: <UserPlus size={18} className="text-sky-400" />,
-      onClick: () => {
-        setActiveExtraType('tag');
-        setExtraValue('');
-      },
-    },
-    {
-      id: 'location',
-      label: 'إضافة موقع',
-      icon: <MapPin size={18} className="text-rose-400" />,
-      onClick: () => {
-        setActiveExtraType('location');
-        setExtraValue('');
-      },
-    },
-    {
-      id: 'feeling',
-      label: 'شعور/نشاط',
-      icon: <Smile size={18} className="text-amber-400" />,
-      onClick: () => {
-        setActiveExtraType('feeling');
-        setExtraValue('');
-      },
-    },
-    {
-      id: 'messages',
-      label: 'تلقى الرسائل',
-      icon: <MessageCircle size={18} className="text-blue-400" />,
-      onClick: () => {
-        setActiveExtraType('messages');
-        setExtraValue('مفتوح للرسائل');
-      },
-    },
-    {
-      id: 'event',
-      label: 'إنشاء مناسبة',
-      icon: <Calendar size={18} className="text-red-400" />,
-      onClick: () => {
-        setActiveExtraType('event');
-        setExtraValue('');
-      },
-    },
-    {
-      id: 'live',
-      label: 'بث مباشر',
-      icon: <Video size={18} className="text-rose-500" />,
-      onClick: () => {
-        setActiveExtraType('live');
-        setExtraValue('مباشر الآن');
-      },
-    },
-  ];
+    setPosts(updater);
+    if (cachedFeedPosts) {
+      cachedFeedPosts = updater(cachedFeedPosts);
+    }
+  };
 
-  const extraPlaceholderMap: Record<string, string> = {
-    music: 'اكتب اسم الأغنية أو الفنان...',
-    tag: 'اكتب اسم الشخص للإشارة إليه...',
-    location: 'اكتب المدينة أو المكان...',
-    feeling: 'اكتب شعورك أو نشاطك الحالي...',
-    messages: 'اكتب ملاحظة حول استقبال الرسائل...',
-    event: 'اكتب اسم المناسبة أو موعدها...',
-    live: 'اكتب عنوان البث المباشر...',
+  const handleAddComment = (postId: string, e: React.FormEvent) => {
+    e.preventDefault();
+    const text = (commentDrafts[postId] || '').trim();
+    if (!text) return;
+
+    const newComment = {
+      id: `cmt-${Date.now()}`,
+      author: currentUserName,
+      text,
+      createdAt: 'الآن',
+    };
+
+    const updater = (list: FeedPostItem[]) =>
+      list.map((p) =>
+        p.id === postId ? { ...p, comments: [...p.comments, newComment] } : p
+      );
+
+    setPosts(updater);
+    if (cachedFeedPosts) {
+      cachedFeedPosts = updater(cachedFeedPosts);
+    }
+    setCommentDrafts((prev) => ({ ...prev, [postId]: '' }));
+  };
+
+  const handleSharePost = async (item: FeedPostItem) => {
+    const shareText = item.content || item.headline || 'منشور من وِصل';
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'وِصل', text: shareText });
+        return;
+      }
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(shareText);
+        setNotice('تم نسخ نص المنشور');
+        setTimeout(() => setNotice(''), 2000);
+      }
+    } catch {
+      // تجاهل إلغاء المشاركة
+    }
+  };
+
+  const handleDeletePost = async (item: FeedPostItem) => {
+    const filterFn = (list: FeedPostItem[]) => list.filter((p) => p.id !== item.id);
+    setPosts(filterFn);
+    if (cachedFeedPosts) {
+      cachedFeedPosts = filterFn(cachedFeedPosts);
+    }
+
+    if (item.dbId) {
+      try {
+        await supabase.from('posts').delete().eq('id', item.dbId);
+      } catch {
+        // تجاهل
+      }
+    }
   };
 
   return (
-    <div dir="rtl" className="mx-auto max-w-2xl space-y-5 pb-6">
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        onChange={(e) => void handleImageSelect(e)}
-        className="hidden"
-      />
-
-      {statusNotice && (
-        <p className="rounded-xl border border-cyan-500/20 bg-slate-900/90 px-3 py-2 text-xs font-bold text-cyan-300">
-          {statusNotice}
-        </p>
-      )}
-
-      {/* قائمة «إنشاء منشور» المنبثقة */}
-      {composerOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-xs p-0 sm:p-4">
-          <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#1c1d21] text-white shadow-2xl flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between border-b border-white/10 bg-[#242529] px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      resetComposerFields();
-                      setComposerOpen(false);
-                    }}
-                    aria-label="رجوع"
-                    className="flex h-8 w-8 items-center justify-center rounded-full text-slate-200 hover:bg-white/10 transition"
-                  >
-                    <ArrowRight size={18} />
-                  </button>
-                  <span className="text-sm font-bold text-white">إنشاء منشور</span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => void executePublish()}
-                  disabled={!canSubmit}
-                  className={`rounded-lg px-3 py-1 text-xs font-bold transition ${
-                    canSubmit
-                      ? 'bg-[#1877F2] text-white hover:bg-[#166fe5]'
-                      : 'text-slate-500 cursor-not-allowed'
-                  }`}
-                >
-                  {publishing ? 'جاري...' : 'نشر'}
-                </button>
-              </div>
-
-              <div className="px-4 pt-3.5 pb-2">
-                <div className="flex items-center gap-3">
-                  {currentProfile.avatar ? (
-                    <img
-                      src={currentProfile.avatar}
-                      alt=""
-                      className="h-11 w-11 shrink-0 rounded-full border border-white/15 object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-800 text-sm font-bold text-white border border-white/15">
-                      {displayName.slice(0, 1)}
-                    </div>
-                  )}
-                  <div>
-                    <p className="text-sm font-bold text-white leading-tight">{displayName}</p>
-                    <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-white/15 bg-[#2a2b30] px-2 py-0.5 text-[11px] font-semibold text-slate-200">
-                      <span>العامة</span>
-                      <span>▾</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-3.5">
-                  <textarea
-                    rows={selectedTheme === 'none' ? 3 : 4}
-                    value={postText}
-                    onChange={(e) => setPostText(e.target.value)}
-                    placeholder="شارك لحظة بارزة من يومك..."
-                    className={`w-full resize-none outline-none transition ${
-                      selectedTheme === 'none'
-                        ? 'bg-transparent text-base text-white placeholder:text-slate-400'
-                        : `${activeThemeObj.className} text-center text-lg font-bold ${
-                            isLightTheme ? 'placeholder:text-slate-500' : 'placeholder:text-white/75'
-                          }`
-                    }`}
-                  />
-                </div>
-
-                {activeExtraType && (
-                  <div className="mt-2 flex items-center gap-2 rounded-xl border border-white/10 bg-[#2a2b30] px-3 py-2">
-                    <input
-                      type="text"
-                      value={extraValue}
-                      onChange={(e) => setExtraValue(e.target.value)}
-                      placeholder={extraPlaceholderMap[activeExtraType] || 'أدخل التفاصيل...'}
-                      className="flex-1 bg-transparent text-xs text-white placeholder:text-slate-400 outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveExtraType(null);
-                        setExtraValue('');
-                      }}
-                      aria-label="إغلاق الإضافة"
-                      className="text-slate-400 hover:text-white"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                )}
-
-                {imagePreview && (
-                  <div className="mt-3 relative">
-                    <img
-                      src={imagePreview}
-                      alt="معاينة الصورة"
-                      className="max-h-60 w-full rounded-xl object-cover border border-white/10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedImageFile(null);
-                        setImagePreview('');
-                      }}
-                      className="mt-1.5 rounded-lg bg-rose-950/70 border border-rose-500/30 px-2.5 py-1 text-[11px] font-bold text-rose-200"
-                    >
-                      إزالة الصورة
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2 border-t border-white/10 bg-[#242529]/80 px-3 py-2">
-                <button
-                  type="button"
-                  onClick={() => setPostText((prev) => `${prev}@`)}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#32343a] text-sm font-bold text-white hover:bg-[#3e4047]"
-                >
-                  @
-                </button>
-
-                <div
-                  ref={themeStripRef}
-                  className="flex flex-1 items-center gap-2 overflow-x-auto py-0.5"
-                >
-                  {BG_THEMES.map((theme) => {
-                    const active = selectedTheme === theme.id;
-                    return (
-                      <button
-                        key={theme.id}
-                        type="button"
-                        onClick={() => setSelectedTheme(theme.id)}
-                        aria-label={theme.label}
-                        className={`h-7 w-7 shrink-0 rounded-lg transition ${SWATCH_COLORS[theme.id]} ${
-                          active ? 'ring-2 ring-white scale-105' : 'opacity-90 hover:opacity-100'
-                        }`}
-                      />
-                    );
-                  })}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    themeStripRef.current?.scrollBy({ left: -120, behavior: 'smooth' });
-                  }}
-                  aria-label="المزيد من الألوان"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#32343a] text-slate-200 hover:bg-[#3e4047]"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-              </div>
-
-              <div className="divide-y divide-white/5 border-t border-white/10 bg-[#1c1d21]">
-                {composerOptions.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={item.onClick}
-                    className="flex w-full items-center gap-3 px-4 py-2.5 text-right text-xs font-semibold text-slate-100 hover:bg-white/5 transition"
-                  >
-                    {item.icon}
-                    <span>{item.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="sticky bottom-0 bg-[#1c1d21] p-3 border-t border-white/10">
-              <button
-                type="button"
-                onClick={() => void executePublish()}
-                disabled={!canSubmit}
-                className="w-full rounded-lg bg-[#1877F2] py-2.5 text-sm font-extrabold text-white shadow transition enabled:hover:bg-[#166fe5] enabled:active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45"
-              >
-                {publishing ? 'جاري النشر...' : 'نشر'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* قائمة المنشورات */}
-      <div className="space-y-4">
-        {mergedPosts.map((post, idx) => (
-          <PostCard key={String(post.id || idx)} post={post} />
-        ))}
+    <div dir="rtl" className="space-y-3 pb-8">
+      <div className="flex items-center justify-between px-1">
+        <span className="text-xs font-extrabold text-slate-400">أحدث المنشورات</span>
+        <button
+          type="button"
+          onClick={() => void fetchPosts(true)}
+          disabled={refreshing}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1 text-[11px] font-bold text-cyan-300 hover:border-cyan-500/40 disabled:opacity-50 transition"
+        >
+          <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
+          <span>{refreshing ? 'تحديث...' : 'تحديث'}</span>
+        </button>
       </div>
 
-      {/* قسم اكتشف أشخاصاً */}
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
-        <div className="mb-4 flex items-center gap-2">
-          <Users size={18} className="text-purple-400" />
-          <h2 className="text-base font-bold text-white">اكتشف أشخاصاً</h2>
-          <span className="rounded-full bg-purple-500/15 px-2 py-0.5 text-xs font-semibold text-purple-300">
-            {discoverPeople.length}
-          </span>
+      {notice && (
+        <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-cyan-300">
+          {notice}
         </div>
+      )}
 
-        {discoverPeople.length === 0 ? (
-          <p className="py-4 text-center text-sm text-slate-500">
-            أضفت الجميع! لا توجد توصيات جديدة حالياً.
-          </p>
-        ) : (
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            {discoverPeople.map((user: Record<string, any>, idx: number) => (
-              <UserCard
-                key={String(user.id || idx)}
-                user={user}
-                onAddFriend={addFriend}
-                onAddContact={addContact}
-                onMessage={startConversationWith}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+      {loading && mergedPosts.length === 0 ? (
+        <div className="space-y-3">
+          {[1, 2, 3].map((n) => (
+            <div
+              key={n}
+              className="rounded-2xl border border-slate-800/80 bg-slate-900/70 p-4 space-y-3 animate-pulse"
+            >
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-slate-800" />
+                <div className="space-y-1.5 flex-1">
+                  <div className="h-3 w-28 rounded bg-slate-800" />
+                  <div className="h-2.5 w-16 rounded bg-slate-800/70" />
+                </div>
+              </div>
+              <div className="h-3 w-4/5 rounded bg-slate-800" />
+              <div className="h-3 w-2/3 rounded bg-slate-800/70" />
+            </div>
+          ))}
+        </div>
+      ) : mergedPosts.length === 0 ? (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-8 text-center space-y-1.5">
+          <p className="text-sm font-bold text-slate-200">لا توجد منشورات بعد</p>
+          <p className="text-xs text-slate-400">شارك أول منشور مع مجتمع وِصل.</p>
+        </div>
+      ) : (
+        mergedPosts.map((item) => {
+          const canDelete = Boolean(
+            (currentUid && item.userId && currentUid === item.userId) ||
+              item.id.startsWith('post-') ||
+              item.id.startsWith('local-')
+          );
+          const isCommentsOpen = openCommentsId === item.id;
+
+          return (
+            <article
+              key={item.id}
+              className="rounded-2xl border border-slate-800/90 bg-slate-900/85 p-3.5 space-y-3 shadow-sm"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {item.authorAvatar ? (
+                    <img
+                      src={item.authorAvatar}
+                      alt={item.authorName}
+                      loading="lazy"
+                      decoding="async"
+                      className="h-10 w-10 shrink-0 rounded-full object-cover border border-cyan-500/25"
+                    />
+                  ) : (
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 border border-purple-500/25 text-sm font-black text-cyan-300">
+                      {item.authorName.slice(0, 1)}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-extrabold text-white">{item.authorName}</p>
+                    <p className="text-[10px] text-slate-400">
+                      {item.authorHandle ? `${item.authorHandle} · ` : ''}
+                      {item.createdAt}
+                    </p>
+                  </div>
+                </div>
+
+                {canDelete && (
+                  <button
+                    type="button"
+                    onClick={() => void handleDeletePost(item)}
+                    aria-label="حذف المنشور"
+                    className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-950/50 hover:text-rose-300 transition"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
+              </div>
+
+              {item.content && (
+                <p className="whitespace-pre-line text-xs sm:text-sm leading-relaxed text-slate-100">
+                  {item.content}
+                </p>
+              )}
+
+              {item.imageUrl && (
+                <div className="overflow-hidden rounded-xl border border-white/10 bg-slate-950">
+                  <img
+                    src={item.imageUrl}
+                    alt="محتوى المنشور"
+                    loading="lazy"
+                    decoding="async"
+                    className="max-h-96 w-full object-cover"
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 text-[11px] text-slate-400">
+                <span>{item.likesCount > 0 ? `${item.likesCount} إعجاب` : ''}</span>
+                <span>{item.comments.length > 0 ? `${item.comments.length} تعليق` : ''}</span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-1 border-t border-slate-800/80 pt-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleToggleLike(item.id)}
+                  className={`flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-bold transition ${
+                    item.likedByMe
+                      ? 'bg-rose-500/15 text-rose-400'
+                      : 'text-slate-300 hover:bg-white/5'
+                  }`}
+                >
+                  <Heart size={15} className={item.likedByMe ? 'fill-rose-400' : ''} />
+                  <span>إعجاب</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setOpenCommentsId((prev) => (prev === item.id ? null : item.id))
+                  }
+                  className="flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-bold text-slate-300 hover:bg-white/5 transition"
+                >
+                  <MessageCircle size={15} />
+                  <span>تعليق</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void handleSharePost(item)}
+                  className="flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-bold text-slate-300 hover:bg-white/5 transition"
+                >
+                  <Share2 size={15} />
+                  <span>مشاركة</span>
+                </button>
+              </div>
+
+              {isCommentsOpen && (
+                <div className="space-y-2 border-t border-slate-800/80 pt-2.5">
+                  {item.comments.map((c) => (
+                    <div
+                      key={c.id}
+                      className="rounded-xl bg-slate-950/80 border border-slate-800/70 px-3 py-2 text-xs"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-cyan-300">{c.author}</span>
+                        <span className="text-[10px] text-slate-500">{c.createdAt}</span>
+                      </div>
+                      <p className="mt-0.5 text-slate-200">{c.text}</p>
+                    </div>
+                  ))}
+
+                  <form
+                    onSubmit={(e) => handleAddComment(item.id, e)}
+                    className="flex items-center gap-2"
+                  >
+                    <input
+                      type="text"
+                      value={commentDrafts[item.id] || ''}
+                      onChange={(e) =>
+                        setCommentDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))
+                      }
+                      placeholder="اكتب تعليقاً..."
+                      className="flex-1 rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      aria-label="إرسال التعليق"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#1877F2] text-white hover:bg-[#166fe5] transition"
+                    >
+                      <Send size={14} />
+                    </button>
+                  </form>
+                </div>
+              )}
+            </article>
+          );
+        })
+      )}
     </div>
   );
 }
