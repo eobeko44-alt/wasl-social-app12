@@ -25,6 +25,7 @@ import {
   Heart,
   UserCheck,
   Check,
+  BadgeCheck,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -80,6 +81,27 @@ interface WaslHeaderBarProps {
   onSelectFriend?: (friend: FriendItem) => void;
   onOpenSwitchAccount?: () => void;
   onLogout?: () => void;
+}
+
+const FOUNDER_USER_IDS = new Set<string>([
+  '9925c38d-c91d-47b6-9da2-f9042d4142d4',
+]);
+
+export function isVerifiedFounderId(userId?: string | null): boolean {
+  if (!userId || typeof userId !== 'string') return false;
+  return FOUNDER_USER_IDS.has(userId.trim());
+}
+
+export function VerifiedBlueBadge({ size = 15 }: { size?: number }) {
+  return (
+    <span
+      title="حساب موثّق رسمياً"
+      aria-label="حساب موثّق رسمياً"
+      className="inline-flex items-center justify-center shrink-0 text-[#1877F2]"
+    >
+      <BadgeCheck size={size} className="fill-[#1877F2] text-white" />
+    </span>
+  );
 }
 
 const MEDIA_BUCKET = 'wasl-media';
@@ -356,14 +378,12 @@ export function WaslHeaderBar({
   const [searchingAccounts, setSearchingAccounts] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // حالة الإشعارات
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [notifMenuId, setNotifMenuId] = useState<string | null>(null);
   const [notifSearchOpen, setNotifSearchOpen] = useState(false);
   const [notifFilterQuery, setNotifFilterQuery] = useState('');
 
-  // شريط تحميل خفيف يظهر للحظات عند تغيّر التبويب
   const [tabPulse, setTabPulse] = useState(false);
   const isFirstRenderRef = useRef(true);
 
@@ -418,7 +438,6 @@ export function WaslHeaderBar({
     };
   }, []);
 
-  // جلب الإشعارات والاشتراك الفوري (Realtime) من جدول notifications
   useEffect(() => {
     if (!currentUid) {
       setNotifications([]);
@@ -481,7 +500,6 @@ export function WaslHeaderBar({
     };
   }, [currentUid]);
 
-  // تعليم الإشعارات كمقروءة عند فتح تبويب الإشعارات
   useEffect(() => {
     if (activeTab !== 'notifications' || !currentUid) return;
     const unreadIds = notifications.filter((n) => !n.is_read).map((n) => n.id);
@@ -673,6 +691,7 @@ export function WaslHeaderBar({
 
   const effectiveName = overrideName || currentUserName || 'حساب وِصل';
   const effectiveAvatar = isValidAvatarUrl(userAvatar) ? userAvatar?.trim() : undefined;
+  const isCurrentUserVerified = isVerifiedFounderId(currentUid);
 
   const [isPublicAccount, setIsPublicAccount] = useState<boolean>(() => {
     try {
@@ -834,7 +853,6 @@ export function WaslHeaderBar({
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
 
-  // تبديل تبويب «حسابي» بتبويب «الإشعارات» مع عداد الإشعارات الجديدة
   const tabs: {
     key: WaslTabKey;
     label: string;
@@ -895,6 +913,7 @@ export function WaslHeaderBar({
   const renderNotificationCard = (item: NotificationItem) => {
     const avatarSrc = isValidAvatarUrl(item.actor_avatar) ? item.actor_avatar!.trim() : undefined;
     const isUnread = !item.is_read;
+    const actorIsVerified = isVerifiedFounderId(item.sender_id);
 
     return (
       <div
@@ -933,7 +952,10 @@ export function WaslHeaderBar({
 
           <div className="min-w-0 flex-1 space-y-1.5">
             <p className="text-xs leading-relaxed text-slate-100">
-              <span className="font-extrabold text-white">{item.actor_name}</span>{' '}
+              <span className="inline-flex items-center gap-1 font-extrabold text-white align-middle">
+                <span>{item.actor_name}</span>
+                {actorIsVerified && <VerifiedBlueBadge size={14} />}
+              </span>{' '}
               <span className="text-slate-200">{item.message}</span>
               {item.preview_text ? (
                 <span className="text-slate-300"> : &ldquo;{item.preview_text}&rdquo;</span>
@@ -1342,40 +1364,46 @@ export function WaslHeaderBar({
                   جاري البحث في حسابات وِصل...
                 </p>
               ) : globalAccounts.length > 0 ? (
-                globalAccounts.map((account) => (
-                  <button
-                    key={account.id}
-                    type="button"
-                    onClick={() => {
-                      onSelectFriend?.(account);
-                      setSearchOpen(false);
-                      setSearchQuery('');
-                      setGlobalAccounts([]);
-                    }}
-                    className="w-full flex items-center justify-between px-3 py-2.5 text-right hover:bg-slate-800"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      {account.avatar ? (
-                        <img
-                          src={account.avatar}
-                          alt={account.name}
-                          loading="lazy"
-                          decoding="async"
-                          className="h-8 w-8 shrink-0 rounded-full object-cover border border-slate-700"
-                        />
-                      ) : (
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-800 border border-slate-700 text-xs font-black text-cyan-300">
-                          {account.name.slice(0, 1)}
+                globalAccounts.map((account) => {
+                  const accVerified = isVerifiedFounderId(account.id);
+                  return (
+                    <button
+                      key={account.id}
+                      type="button"
+                      onClick={() => {
+                        onSelectFriend?.(account);
+                        setSearchOpen(false);
+                        setSearchQuery('');
+                        setGlobalAccounts([]);
+                      }}
+                      className="w-full flex items-center justify-between px-3 py-2.5 text-right hover:bg-slate-800"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {account.avatar ? (
+                          <img
+                            src={account.avatar}
+                            alt={account.name}
+                            loading="lazy"
+                            decoding="async"
+                            className="h-8 w-8 shrink-0 rounded-full object-cover border border-slate-700"
+                          />
+                        ) : (
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-800 border border-slate-700 text-xs font-black text-cyan-300">
+                            {account.name.slice(0, 1)}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="flex items-center gap-1 text-xs font-bold text-white">
+                            <span className="truncate">{account.name}</span>
+                            {accVerified && <VerifiedBlueBadge size={14} />}
+                          </p>
+                          <p className="text-[10px] text-slate-400">حساب في وِصل</p>
                         </div>
-                      )}
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-bold text-white">{account.name}</p>
-                        <p className="text-[10px] text-slate-400">حساب في وِصل</p>
                       </div>
-                    </div>
-                    <span className="text-[11px] font-bold text-cyan-400">مراسلة</span>
-                  </button>
-                ))
+                      <span className="text-[11px] font-bold text-cyan-400">مراسلة</span>
+                    </button>
+                  );
+                })
               ) : (
                 <p className="px-3 py-3 text-center text-xs text-slate-400">
                   لا يوجد حساب باسم «{searchQuery.trim()}» في وِصل
@@ -1682,7 +1710,10 @@ export function WaslHeaderBar({
                     </div>
                   )}
                   <div>
-                    <p className="text-sm font-bold text-white leading-tight">{effectiveName}</p>
+                    <p className="flex items-center gap-1 text-sm font-bold text-white leading-tight">
+                      <span>{effectiveName}</span>
+                      {isCurrentUserVerified && <VerifiedBlueBadge size={15} />}
+                    </p>
                     <div className="mt-1 inline-flex items-center gap-1 rounded-md border border-white/15 bg-[#2a2b30] px-2 py-0.5 text-[11px] font-semibold text-slate-200">
                       <span>{isPublicAccount ? 'العامة' : 'خاص'}</span>
                       <span>▾</span>
@@ -1886,7 +1917,10 @@ export function WaslHeaderBar({
             <div className="space-y-3">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-black text-white">{effectiveName}</p>
+                  <p className="flex items-center gap-1 text-sm font-black text-white">
+                    <span className="truncate">{effectiveName}</span>
+                    {isCurrentUserVerified && <VerifiedBlueBadge size={15} />}
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -2078,6 +2112,7 @@ export function WaslHeaderBar({
             ) : (
               switchAccountsList.map((acc) => {
                 const avatarSrc = isValidAvatarUrl(acc.avatar) ? acc.avatar : undefined;
+                const accVerified = isVerifiedFounderId(acc.id);
                 return (
                   <div
                     key={acc.id}
@@ -2103,7 +2138,10 @@ export function WaslHeaderBar({
                           {acc.name.slice(0, 1)}
                         </div>
                       )}
-                      <span className="truncate text-sm font-bold text-white">{acc.name}</span>
+                      <span className="flex items-center gap-1 text-sm font-bold text-white min-w-0">
+                        <span className="truncate">{acc.name}</span>
+                        {accVerified && <VerifiedBlueBadge size={15} />}
+                      </span>
                     </div>
 
                     {switchManageMode ? (
@@ -2230,7 +2268,10 @@ export function WaslHeaderBar({
                       <UserCog size={18} className="text-cyan-400 shrink-0" />
                       <span>التفاصيل الشخصية</span>
                     </span>
-                    <span className="text-[11px] font-bold text-cyan-400">{effectiveName}</span>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-cyan-400">
+                      <span>{effectiveName}</span>
+                      {isCurrentUserVerified && <VerifiedBlueBadge size={13} />}
+                    </span>
                   </button>
                 )}
 
