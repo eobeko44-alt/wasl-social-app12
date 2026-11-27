@@ -134,6 +134,26 @@ export function FriendsTab({
     [profileMap]
   );
 
+  const triggerOpenChat = useCallback(
+    (targetId: string, targetName: string, targetAvatar?: string) => {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('wasl-open-chat', {
+            detail: {
+              userId: targetId,
+              userName: targetName,
+              avatar: targetAvatar,
+            },
+          })
+        );
+      } catch {
+        // تجاهل
+      }
+      onOpenChatWithUser?.(targetId, targetName);
+    },
+    [onOpenChatWithUser]
+  );
+
   const incomingRequests = useMemo(
     () =>
       friendships.filter(
@@ -289,7 +309,6 @@ export function FriendsTab({
 
   return (
     <div dir="rtl" className="min-h-screen bg-[#18191a] text-[#e4e6eb] p-4 space-y-4 pb-20">
-      {/* العنوان وزر التحديث */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Users className="text-cyan-400" size={22} />
@@ -304,7 +323,6 @@ export function FriendsTab({
         </button>
       </div>
 
-      {/* شريط البحث */}
       <div className="flex items-center gap-2 rounded-full bg-[#242526] border border-white/10 px-4 py-2.5">
         <Search size={16} className="text-slate-400 shrink-0" />
         <input
@@ -326,7 +344,6 @@ export function FriendsTab({
         )}
       </div>
 
-      {/* أزرار الأقسام */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
         <button
           type="button"
@@ -365,7 +382,6 @@ export function FriendsTab({
         </button>
       </div>
 
-      {/* رسائل الحالة */}
       {loading && (
         <div className="rounded-2xl bg-[#242526] border border-white/10 p-6 text-center text-xs font-bold text-slate-400">
           جاري تحميل قائمة الأصدقاء...
@@ -384,7 +400,6 @@ export function FriendsTab({
         </div>
       )}
 
-      {/* 1. قسم طلبات الصداقة */}
       {!loading && currentUserId && activeSubTab === 'requests' && (
         <div className="space-y-3">
           <h2 className="text-sm font-extrabold text-white">
@@ -450,7 +465,6 @@ export function FriendsTab({
         </div>
       )}
 
-      {/* 2. قسم أشخاص قد تعرفهم */}
       {!loading && currentUserId && activeSubTab === 'suggestions' && (
         <div className="space-y-3">
           <h2 className="text-sm font-extrabold text-white">أشخاص قد تعرفهم</h2>
@@ -528,7 +542,6 @@ export function FriendsTab({
         </div>
       )}
 
-      {/* 3. قسم أصدقاؤك */}
       {!loading && currentUserId && activeSubTab === 'friends' && (
         <div className="space-y-3">
           <h2 className="text-sm font-extrabold text-white">أصدقاؤك</h2>
@@ -572,15 +585,13 @@ export function FriendsTab({
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    {onOpenChatWithUser && (
-                      <button
-                        type="button"
-                        onClick={() => onOpenChatWithUser(otherId, name)}
-                        className="rounded-xl bg-[#1877F2]/20 border border-[#1877F2]/40 px-3 py-1.5 text-xs font-bold text-[#4599FF] hover:bg-[#1877F2]/30 transition"
-                      >
-                        مراسلة
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => triggerOpenChat(otherId, name, avatar)}
+                      className="rounded-xl bg-[#1877F2]/20 border border-[#1877F2]/40 px-3 py-1.5 text-xs font-bold text-[#4599FF] hover:bg-[#1877F2]/30 transition"
+                    >
+                      مراسلة
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleRemoveFriendship(f.id)}
