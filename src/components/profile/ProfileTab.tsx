@@ -196,8 +196,8 @@ function VerifiedBlueBadge({ size = 18 }: { size?: number }) {
   );
 }
 
-const STORAGE_PREFIX = 'wasl_p4_';
-const DB_NAME = 'wasl_profile_db_v5';
+const STORAGE_PREFIX = 'wasl_p5_';
+const DB_NAME = 'wasl_profile_db_v6';
 const DB_STORE = 'profile_state_by_user';
 const MEDIA_BUCKET = 'wasl-media';
 
@@ -378,7 +378,6 @@ export default function ProfileTab() {
   const [openCommentsPostId, setOpenCommentsPostId] = useState<string | null>(null);
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
 
-  // حالة قائمة الثلاث نقاط والنوافذ الفرعية لكل منشور/صورة
   const [menuPostId, setMenuPostId] = useState<string | null>(null);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [editingPostText, setEditingPostText] = useState<string>('');
@@ -1048,7 +1047,6 @@ export default function ProfileTab() {
     notifyUser('تم حذف المنشور');
   };
 
-  // إجراءات قائمة الثلاث نقاط لكل منشور أو صورة
   const handleTogglePostNotifications = (post: ActivityPostItem) => {
     const nextMuted = !post.mutedNotifications;
     setActivityPosts((prev) =>
@@ -1365,7 +1363,6 @@ export default function ProfileTab() {
         </div>
       </section>
 
-      {/* نافذة قائمة المتابعون / يتابع */}
       {showFollowModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
@@ -1520,7 +1517,6 @@ export default function ProfileTab() {
         </div>
       )}
 
-      {/* القائمة السفلية لزر الثلاث نقاط (...) للمنشورات والصور */}
       {activeMenuPost && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 sm:items-center sm:p-4"
@@ -1664,7 +1660,6 @@ export default function ProfileTab() {
         </div>
       )}
 
-      {/* نافذة تعديل المنشور */}
       {editingPostId && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
@@ -1710,7 +1705,6 @@ export default function ProfileTab() {
         </div>
       )}
 
-      {/* نافذة إشارة في صورة */}
       {tagModalPostId && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
@@ -1748,7 +1742,6 @@ export default function ProfileTab() {
         </div>
       )}
 
-      {/* نافذة من الذي يمكنه التعليق */}
       {audienceModalPostId && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
@@ -1782,7 +1775,6 @@ export default function ProfileTab() {
         </div>
       )}
 
-      {/* نافذة تعديل الخصوصية */}
       {privacyModalPostId && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
@@ -1813,7 +1805,6 @@ export default function ProfileTab() {
         </div>
       )}
 
-      {/* نافذة إنشاء إعلان */}
       {adModalPostId && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
@@ -1853,7 +1844,6 @@ export default function ProfileTab() {
         </div>
       )}
 
-      {/* نموذج تعديل التفاصيل الشخصية */}
       {editingDetails && (
         <form
           onSubmit={handleSaveDetails}
@@ -2092,7 +2082,6 @@ export default function ProfileTab() {
         </section>
       )}
 
-      {/* قسم الصور مع زر الثلاث نقاط (...) على كل صورة */}
       {activeSubTab === 'photos' && (
         <section className="rounded-2xl border border-slate-800 bg-slate-900/75 p-4 space-y-3">
           <div className="flex items-center gap-1.5">
@@ -2105,30 +2094,20 @@ export default function ProfileTab() {
           ) : (
             <div className="grid grid-cols-3 gap-2">
               {photoPosts.map((p, idx) => (
-                <div key={`${p.id}-${idx}`} className="relative group">
-                  <img
-                    src={p.image}
-                    alt={`صورة ${idx + 1}`}
-                    loading="lazy"
-                    decoding="async"
-                    className="h-28 w-full rounded-xl object-cover border border-slate-800"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setMenuPostId(p.id)}
-                    aria-label="خيارات الصورة"
-                    className="absolute top-1.5 left-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-slate-950/85 text-white border border-slate-700/80 hover:bg-slate-800 transition"
-                  >
-                    <MoreHorizontal size={15} />
-                  </button>
-                </div>
+                <img
+                  key={`${p.id}-${idx}`}
+                  src={p.image}
+                  alt={`صورة ${idx + 1}`}
+                  loading="lazy"
+                  decoding="async"
+                  className="h-28 w-full rounded-xl object-cover border border-slate-800"
+                />
               ))}
             </div>
           )}
         </section>
       )}
 
-      {/* منشورات الملف الشخصي مع زر الثلاث نقاط (...) في أعلى كل منشور */}
       {activeSubTab === 'all' && (
         <section className="space-y-3">
           <h2 className="px-1 text-sm font-black text-white">المنشورات</h2>
@@ -2213,27 +2192,17 @@ export default function ProfileTab() {
                   )}
 
                   {post.image && (
-                    <div className="relative">
-                      <img
-                        src={post.image}
-                        alt={post.headline}
-                        loading="lazy"
-                        decoding="async"
-                        className={`w-full rounded-xl object-cover border border-slate-800 ${
-                          post.kind === 'avatar'
-                            ? 'mx-auto h-64 w-64 rounded-full'
-                            : 'max-h-80'
-                        }`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setMenuPostId(post.id)}
-                        aria-label="خيارات الصورة"
-                        className="absolute top-2.5 left-2.5 flex h-8 w-8 items-center justify-center rounded-full bg-slate-950/80 text-white border border-slate-700/80 hover:bg-slate-800 transition"
-                      >
-                        <MoreHorizontal size={16} />
-                      </button>
-                    </div>
+                    <img
+                      src={post.image}
+                      alt={post.headline}
+                      loading="lazy"
+                      decoding="async"
+                      className={`w-full rounded-xl object-cover border border-slate-800 ${
+                        post.kind === 'avatar'
+                          ? 'mx-auto h-64 w-64 rounded-full'
+                          : 'max-h-80'
+                      }`}
+                    />
                   )}
 
                   <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 text-[11px] text-slate-400">
