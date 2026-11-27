@@ -439,7 +439,7 @@ export function WaslHeaderBar({
     }
   }, [currentUid, currentUserName, userAvatar]);
 
-  // بحث عام عن أي حساب مسجل في «وِصل» بالاسم
+  // بحث عام عن أي حساب مسجل في «وِصل» بالاسم مع مهلة أمان لمنع التعليق
   useEffect(() => {
     const trimmed = searchQuery.trim();
     if (!searchOpen || !trimmed) {
@@ -451,30 +451,49 @@ export function WaslHeaderBar({
     let cancelled = false;
     setSearchingAccounts(true);
 
+    const safetyTimeout = setTimeout(() => {
+      if (!cancelled) {
+        setSearchingAccounts(false);
+      }
+    }, 4500);
+
     const timer = setTimeout(() => {
       void (async () => {
         try {
           const { data, error } = await supabase
             .from('profiles')
-            .select('id, full_name, avatar_url')
-            .ilike('full_name', `%${trimmed}%`)
-            .limit(20);
+            .select('*')
+            .limit(40);
 
           if (cancelled) return;
 
           if (!error && Array.isArray(data)) {
+            const qLower = trimmed.toLowerCase();
             const mapped: FriendItem[] = data
-              .filter((row: any) => row?.id && row.id !== currentUid)
-              .map((row: any) => ({
-                id: String(row.id),
-                name:
-                  typeof row.full_name === 'string' && row.full_name.trim()
-                    ? row.full_name.trim()
-                    : 'حساب وِصل',
-                avatar: isValidAvatarUrl(row.avatar_url)
-                  ? String(row.avatar_url).trim()
-                  : undefined,
-              }));
+              .map((row: any) => {
+                const id = String(row?.id || row?.user_id || '');
+                const candidateName =
+                  row?.full_name ||
+                  row?.name ||
+                  row?.display_name ||
+                  row?.username ||
+                  '';
+                const cleanName = typeof candidateName === 'string' ? candidateName.trim() : '';
+                const candidateAvatar = row?.avatar_url || row?.avatar || '';
+                return {
+                  id,
+                  name: cleanName || 'حساب وِصل',
+                  avatar: isValidAvatarUrl(candidateAvatar)
+                    ? String(candidateAvatar).trim()
+                    : undefined,
+                };
+              })
+              .filter(
+                (item) =>
+                  item.id &&
+                  item.id !== currentUid &&
+                  item.name.toLowerCase().includes(qLower)
+              );
 
             setGlobalAccounts(mapped);
           } else {
@@ -491,16 +510,18 @@ export function WaslHeaderBar({
             setGlobalAccounts(localFallback);
           }
         } finally {
+          clearTimeout(safetyTimeout);
           if (!cancelled) {
             setSearchingAccounts(false);
           }
         }
       })();
-    }, 220);
+    }, 200);
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      clearTimeout(safetyTimeout);
     };
   }, [searchOpen, searchQuery, currentUid, friends]);
 
@@ -1252,7 +1273,6 @@ export function WaslHeaderBar({
       {activeTab === 'feed' && (
         <>
           <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-slate-900">
-            {/* صورة الحساب تفتح الملف الشخصي مباشرة */}
             <button
               type="button"
               onClick={() => onSelectTab('profile')}
