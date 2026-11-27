@@ -321,6 +321,8 @@ export function WaslHeaderBar({
 }: WaslHeaderBarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [globalAccounts, setGlobalAccounts] = useState<FriendItem[]>([]);
+  const [searchingAccounts, setSearchingAccounts] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [switchModalOpen, setSwitchModalOpen] = useState(false);
@@ -436,6 +438,71 @@ export function WaslHeaderBar({
       writeScopedAccountProfile(currentUid, { avatar: cleanAv });
     }
   }, [currentUid, currentUserName, userAvatar]);
+
+  // بحث عام عن أي حساب مسجل في «وِصل» بالاسم
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!searchOpen || !trimmed) {
+      setGlobalAccounts([]);
+      setSearchingAccounts(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSearchingAccounts(true);
+
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('id, full_name, avatar_url')
+            .ilike('full_name', `%${trimmed}%`)
+            .limit(20);
+
+          if (cancelled) return;
+
+          if (!error && Array.isArray(data)) {
+            const mapped: FriendItem[] = data
+              .filter((row: any) => row?.id && row.id !== currentUid)
+              .map((row: any) => ({
+                id: String(row.id),
+                name:
+                  typeof row.full_name === 'string' && row.full_name.trim()
+                    ? row.full_name.trim()
+                    : 'حساب وِصل',
+                avatar: isValidAvatarUrl(row.avatar_url)
+                  ? String(row.avatar_url).trim()
+                  : undefined,
+              }));
+
+            setGlobalAccounts(mapped);
+          } else {
+            const localFallback = friends.filter((f) =>
+              f.name.toLowerCase().includes(trimmed.toLowerCase())
+            );
+            setGlobalAccounts(localFallback);
+          }
+        } catch {
+          if (!cancelled) {
+            const localFallback = friends.filter((f) =>
+              f.name.toLowerCase().includes(trimmed.toLowerCase())
+            );
+            setGlobalAccounts(localFallback);
+          }
+        } finally {
+          if (!cancelled) {
+            setSearchingAccounts(false);
+          }
+        }
+      })();
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [searchOpen, searchQuery, currentUid, friends]);
 
   const loadAccountsForSwitcher = async () => {
     const localList = readLocalSavedAccounts();
@@ -757,9 +824,6 @@ export function WaslHeaderBar({
   const themeStripRef = useRef<HTMLDivElement | null>(null);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
-  const filteredFriends = normalizedQuery
-    ? friends.filter((f) => f.name.toLowerCase().includes(normalizedQuery))
-    : friends;
 
   const tabs: { key: WaslTabKey; label: string; icon: string; badge?: number }[] = [
     { key: 'feed', label: 'العام', icon: '🌐' },
@@ -1048,9 +1112,10 @@ export function WaslHeaderBar({
             onClick={() => {
               setSearchOpen((prev) => !prev);
               setSearchQuery('');
+              setGlobalAccounts([]);
             }}
-            title="بحث عن أصدقاء"
-            aria-label="بحث عن أصدقاء"
+            title="بحث عام في وِصل"
+            aria-label="بحث عام في وِصل"
             className={`flex h-9 w-9 items-center justify-center rounded-full border text-sm transition ${
               searchOpen
                 ? 'bg-cyan-500/15 border-cyan-400 text-cyan-300'
@@ -1072,7 +1137,7 @@ export function WaslHeaderBar({
         </div>
       </div>
 
-      {/* شريط البحث عن الأصدقاء */}
+      {/* شريط البحث العام عن أي حساب مسجل في وِصل بالاسم */}
       {searchOpen && (
         <div className="px-4 pb-2.5 space-y-2 border-b border-slate-800/80 bg-slate-950">
           <div className="flex items-center gap-2 rounded-xl bg-slate-900 border border-purple-500/25 px-3 py-2">
@@ -1081,14 +1146,17 @@ export function WaslHeaderBar({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="ابحث عن صديق بالاسم..."
+              placeholder="ابحث باسم أي حساب في وِصل..."
               autoFocus
               className="w-full bg-transparent text-xs text-white placeholder:text-slate-500 focus:outline-none"
             />
             {searchQuery && (
               <button
                 type="button"
-                onClick={() => setSearchQuery('')}
+                onClick={() => {
+                  setSearchQuery('');
+                  setGlobalAccounts([]);
+                }}
                 className="text-xs text-slate-400 hover:text-white"
               >
                 ✕
@@ -1097,41 +1165,47 @@ export function WaslHeaderBar({
           </div>
 
           {normalizedQuery && (
-            <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-800 bg-slate-900/90 divide-y divide-slate-800/70">
-              {filteredFriends.length > 0 ? (
-                filteredFriends.map((friend) => (
+            <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-800 bg-slate-900/95 divide-y divide-slate-800/70">
+              {searchingAccounts ? (
+                <p className="px-3 py-3 text-center text-xs text-slate-400">
+                  جاري البحث في حسابات وِصل...
+                </p>
+              ) : globalAccounts.length > 0 ? (
+                globalAccounts.map((account) => (
                   <button
-                    key={friend.id}
+                    key={account.id}
                     type="button"
                     onClick={() => {
-                      onSelectFriend?.(friend);
+                      onSelectFriend?.(account);
                       setSearchOpen(false);
                       setSearchQuery('');
+                      setGlobalAccounts([]);
                     }}
-                    className="w-full flex items-center justify-between px-3 py-2 text-right hover:bg-slate-800/70 transition"
+                    className="w-full flex items-center justify-between px-3 py-2.5 text-right hover:bg-slate-800/70 transition"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      {friend.avatar ? (
+                      {account.avatar ? (
                         <img
-                          src={friend.avatar}
-                          alt={friend.name}
+                          src={account.avatar}
+                          alt={account.name}
                           className="h-8 w-8 shrink-0 rounded-full object-cover border border-cyan-500/25"
                         />
                       ) : (
                         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 border border-cyan-500/25 text-xs font-black text-cyan-300">
-                          {friend.name.slice(0, 1)}
+                          {account.name.slice(0, 1)}
                         </div>
                       )}
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-bold text-white">{friend.name}</p>
+                        <p className="truncate text-xs font-bold text-white">{account.name}</p>
+                        <p className="text-[10px] text-slate-400">حساب في وِصل</p>
                       </div>
                     </div>
-                    <span className="text-[11px] font-bold text-cyan-400">عرض</span>
+                    <span className="text-[11px] font-bold text-cyan-400">مراسلة</span>
                   </button>
                 ))
               ) : (
                 <p className="px-3 py-3 text-center text-xs text-slate-400">
-                  لا يوجد حساب مطابق لـ «{searchQuery}»
+                  لا يوجد حساب باسم «{searchQuery.trim()}» في وِصل
                 </p>
               )}
             </div>
@@ -1178,17 +1252,26 @@ export function WaslHeaderBar({
       {activeTab === 'feed' && (
         <>
           <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-slate-900">
-            {effectiveAvatar ? (
-              <img
-                src={effectiveAvatar}
-                alt={effectiveName}
-                className="h-10 w-10 shrink-0 rounded-full object-cover border border-cyan-500/35"
-              />
-            ) : (
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 border border-purple-500/30 text-sm font-black text-cyan-300">
-                {effectiveName.slice(0, 1)}
-              </div>
-            )}
+            {/* صورة الحساب تفتح الملف الشخصي مباشرة */}
+            <button
+              type="button"
+              onClick={() => onSelectTab('profile')}
+              title="فتح الملف الشخصي"
+              aria-label="فتح الملف الشخصي"
+              className="shrink-0 rounded-full focus:outline-none active:scale-95 transition"
+            >
+              {effectiveAvatar ? (
+                <img
+                  src={effectiveAvatar}
+                  alt={effectiveName}
+                  className="h-10 w-10 rounded-full object-cover border border-cyan-500/35"
+                />
+              ) : (
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-l from-cyan-600/30 to-purple-600/30 border border-purple-500/30 text-sm font-black text-cyan-300">
+                  {effectiveName.slice(0, 1)}
+                </div>
+              )}
+            </button>
 
             <button
               type="button"
@@ -1565,7 +1648,7 @@ export function WaslHeaderBar({
                   }}
                   className="w-full flex items-center justify-between rounded-xl bg-slate-950/80 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-100 hover:border-purple-500/40 transition"
                 >
-                  <span>بحث عن أصدقاء</span>
+                  <span>بحث عام في وِصل</span>
                   <span>🔍</span>
                 </button>
 
