@@ -23,9 +23,12 @@ export default function ChatsTab() {
   useEffect(() => {
     const onOpenChatEvent = (event: Event) => {
       const customEvent = event as CustomEvent<OpenChatEventDetail>;
-      const targetId = customEvent.detail?.userId;
-      if (targetId) {
-        openConversation(targetId);
+      const detail = customEvent.detail;
+      if (detail?.userId) {
+        openConversation(detail.userId, {
+          userName: detail.userName,
+          avatar: detail.avatar,
+        });
         setMobileView('chat');
       }
     };
