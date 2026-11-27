@@ -376,6 +376,7 @@ export function WaslHeaderBar({
   const [searchQuery, setSearchQuery] = useState('');
   const [globalAccounts, setGlobalAccounts] = useState<FriendItem[]>([]);
   const [searchingAccounts, setSearchingAccounts] = useState(false);
+  const searchReqRef = useRef(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -549,21 +550,19 @@ export function WaslHeaderBar({
   useEffect(() => {
     const trimmed = searchQuery.trim();
     if (!searchOpen || !trimmed) {
+      searchReqRef.current += 1;
       setGlobalAccounts([]);
       setSearchingAccounts(false);
       return;
     }
 
+    const reqId = ++searchReqRef.current;
     let cancelled = false;
-    setSearchingAccounts(true);
 
-    const safetyTimeout = setTimeout(() => {
-      if (!cancelled) {
-        setSearchingAccounts(false);
-      }
-    }, 2500);
+    const timer = window.setTimeout(() => {
+      if (cancelled || reqId !== searchReqRef.current) return;
+      setSearchingAccounts(true);
 
-    const timer = setTimeout(() => {
       void (async () => {
         try {
           const { data, error } = await supabase
@@ -572,7 +571,7 @@ export function WaslHeaderBar({
             .ilike('full_name', `%${trimmed}%`)
             .limit(12);
 
-          if (cancelled) return;
+          if (cancelled || reqId !== searchReqRef.current) return;
 
           if (!error && Array.isArray(data)) {
             const mapped: FriendItem[] = data
@@ -596,15 +595,14 @@ export function WaslHeaderBar({
             setGlobalAccounts(localFallback);
           }
         } catch {
-          if (!cancelled) {
+          if (!cancelled && reqId === searchReqRef.current) {
             const localFallback = friends.filter((f) =>
               f.name.toLowerCase().includes(trimmed.toLowerCase())
             );
             setGlobalAccounts(localFallback);
           }
         } finally {
-          clearTimeout(safetyTimeout);
-          if (!cancelled) {
+          if (!cancelled && reqId === searchReqRef.current) {
             setSearchingAccounts(false);
           }
         }
@@ -613,8 +611,7 @@ export function WaslHeaderBar({
 
     return () => {
       cancelled = true;
-      clearTimeout(timer);
-      clearTimeout(safetyTimeout);
+      window.clearTimeout(timer);
     };
   }, [searchOpen, searchQuery, currentUid, friends]);
 
@@ -1330,9 +1327,9 @@ export function WaslHeaderBar({
         </div>
       </div>
 
-      {/* شريط البحث العام عن أي حساب مسجل في وِصل بالاسم */}
+      {/* شريط البحث العام العائم (يمنع أي رجفة أو تحريك للصفحة تحته) */}
       {searchOpen && (
-        <div className="px-4 pb-2.5 space-y-2 border-b border-slate-800 bg-[#0A0F1C]">
+        <div className="relative px-4 pb-2.5 border-b border-slate-800 bg-[#0A0F1C]">
           <div className="flex items-center gap-2 rounded-xl bg-slate-900 border border-slate-800 px-3 py-2">
             <Search size={14} className="text-cyan-400 shrink-0" />
             <input
@@ -1358,18 +1355,15 @@ export function WaslHeaderBar({
           </div>
 
           {normalizedQuery && (
-            <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 divide-y divide-slate-800">
-              {searchingAccounts ? (
-                <p className="px-3 py-3 text-center text-xs text-slate-400">
-                  جاري البحث في حسابات وِصل...
-                </p>
-              ) : globalAccounts.length > 0 ? (
+            <div className="absolute top-full left-4 right-4 z-50 mt-1 max-h-56 overflow-y-auto rounded-xl border border-slate-800 bg-slate-900/98 shadow-2xl divide-y divide-slate-800">
+              {globalAccounts.length > 0 ? (
                 globalAccounts.map((account) => {
                   const accVerified = isVerifiedFounderId(account.id);
                   return (
                     <button
                       key={account.id}
                       type="button"
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
                         onSelectFriend?.(account);
                         setSearchOpen(false);
@@ -1406,7 +1400,9 @@ export function WaslHeaderBar({
                 })
               ) : (
                 <p className="px-3 py-3 text-center text-xs text-slate-400">
-                  لا يوجد حساب باسم «{searchQuery.trim()}» في وِصل
+                  {searchingAccounts
+                    ? 'جاري البحث في حسابات وِصل...'
+                    : `لا يوجد حساب باسم «${searchQuery.trim()}» في وِصل`}
                 </p>
               )}
             </div>
