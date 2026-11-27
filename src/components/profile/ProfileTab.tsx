@@ -46,6 +46,7 @@ interface ActivityPostItem {
 }
 
 interface PersistedProfileData {
+  name?: string;
   coverImage: string;
   avatarImage: string;
   bio: string;
@@ -59,39 +60,20 @@ interface PersistedProfileData {
   posts: ActivityPostItem[];
 }
 
-const META_STORAGE_KEY = 'wasl_profile_meta_v3';
-const POSTS_STORAGE_KEY = 'wasl_profile_posts_v3';
-const AVATAR_KEY = 'wasl_persisted_avatar_v1';
-const COVER_KEY = 'wasl_persisted_cover_v1';
-const OVERRIDE_NAME_KEY = 'wasl_override_name_v1';
-const DB_NAME = 'wasl_profile_db_v1';
-const DB_STORE = 'profile_state';
+const STORAGE_PREFIX = 'wasl_p_';
+const DB_NAME = 'wasl_profile_db_v2';
+const DB_STORE = 'profile_state_by_user';
 const MEDIA_BUCKET = 'wasl-media';
 
-function resolveNameFromStorage(fallbackName: string): string {
-  try {
-    const ovName = localStorage.getItem(OVERRIDE_NAME_KEY)?.trim() || '';
-    if (ovName) return ovName;
-  } catch {
-    // تجاهل
-  }
+const DEFAULT_BIO = 'مطوّر ومحب للتكنولوجيا. أعيش لحظاتي بهدوء.';
+const DEFAULT_CITY = 'شندي';
+const DEFAULT_HOMETOWN = 'شندي';
+const DEFAULT_BIRTHDAY = '٢٠ سبتمبر ٢٠٠٢';
+const DEFAULT_EDUCATION = 'كلية التربية - معلمين';
+const DEFAULT_INTERESTS = 'PUBG Mobile، Garena Free Fire';
 
-  try {
-    const raw = localStorage.getItem(META_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (typeof parsed?.name === 'string' && parsed.name.trim()) {
-        return parsed.name.trim();
-      }
-      if (typeof parsed?.full_name === 'string' && parsed.full_name.trim()) {
-        return parsed.full_name.trim();
-      }
-    }
-  } catch {
-    // تجاهل
-  }
-
-  return fallbackName;
+function scopedKey(uid: string, suffix: string): string {
+  return `${STORAGE_PREFIX}${uid}_${suffix}`;
 }
 
 function openProfileDB(): Promise<IDBDatabase | null> {
@@ -116,13 +98,14 @@ function openProfileDB(): Promise<IDBDatabase | null> {
   });
 }
 
-async function saveToIndexedDB(data: PersistedProfileData): Promise<void> {
+async function saveToIndexedDB(uid: string, data: PersistedProfileData): Promise<void> {
+  if (!uid) return;
   const db = await openProfileDB();
   if (!db) return;
   return new Promise((resolve) => {
     try {
       const tx = db.transaction(DB_STORE, 'readwrite');
-      tx.objectStore(DB_STORE).put(data, 'main');
+      tx.objectStore(DB_STORE).put(data, uid);
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     } catch {
@@ -131,13 +114,14 @@ async function saveToIndexedDB(data: PersistedProfileData): Promise<void> {
   });
 }
 
-async function loadFromIndexedDB(): Promise<Partial<PersistedProfileData> | null> {
+async function loadFromIndexedDB(uid: string): Promise<Partial<PersistedProfileData> | null> {
+  if (!uid) return null;
   const db = await openProfileDB();
   if (!db) return null;
   return new Promise((resolve) => {
     try {
       const tx = db.transaction(DB_STORE, 'readonly');
-      const req = tx.objectStore(DB_STORE).get('main');
+      const req = tx.objectStore(DB_STORE).get(uid);
       req.onsuccess = () => resolve((req.result as Partial<PersistedProfileData>) || null);
       req.onerror = () => resolve(null);
     } catch {
@@ -146,22 +130,23 @@ async function loadFromIndexedDB(): Promise<Partial<PersistedProfileData> | null
   });
 }
 
-function loadLocalSnapshot(): Partial<PersistedProfileData> {
+function loadLocalSnapshot(uid: string): Partial<PersistedProfileData> {
+  if (!uid) return {};
   const result: Partial<PersistedProfileData> = {};
   try {
-    const savedAvatar = localStorage.getItem(AVATAR_KEY);
+    const savedAvatar = localStorage.getItem(scopedKey(uid, 'avatar'));
     if (savedAvatar) result.avatarImage = savedAvatar;
   } catch {
     // تجاهل
   }
   try {
-    const savedCover = localStorage.getItem(COVER_KEY);
+    const savedCover = localStorage.getItem(scopedKey(uid, 'cover'));
     if (savedCover) result.coverImage = savedCover;
   } catch {
     // تجاهل
   }
   try {
-    const metaRaw = localStorage.getItem(META_STORAGE_KEY);
+    const metaRaw = localStorage.getItem(scopedKey(uid, 'meta'));
     if (metaRaw) {
       Object.assign(result, JSON.parse(metaRaw));
     }
@@ -169,7 +154,7 @@ function loadLocalSnapshot(): Partial<PersistedProfileData> {
     // تجاهل
   }
   try {
-    const postsRaw = localStorage.getItem(POSTS_STORAGE_KEY);
+    const postsRaw = localStorage.getItem(scopedKey(uid, 'posts'));
     if (postsRaw) {
       result.posts = JSON.parse(postsRaw) as ActivityPostItem[];
     }
@@ -179,13 +164,18 @@ function loadLocalSnapshot(): Partial<PersistedProfileData> {
   return result;
 }
 
-async function saveAllPersistence(data: PersistedProfileData): Promise<void> {
+async function saveAllPersistence(uid: string, data: PersistedProfileData): Promise<void> {
+  if (!uid) return;
   try {
     if (data.avatarImage) {
-      localStorage.setItem(AVATAR_KEY, data.avatarImage);
+      localStorage.setItem(scopedKey(uid, 'avatar'), data.avatarImage);
+    } else {
+      localStorage.removeItem(scopedKey(uid, 'avatar'));
     }
     if (data.coverImage) {
-      localStorage.setItem(COVER_KEY, data.coverImage);
+      localStorage.setItem(scopedKey(uid, 'cover'), data.coverImage);
+    } else {
+      localStorage.removeItem(scopedKey(uid, 'cover'));
     }
   } catch {
     // تجاهل
@@ -193,19 +183,17 @@ async function saveAllPersistence(data: PersistedProfileData): Promise<void> {
 
   const { posts, avatarImage, coverImage, ...metaOnly } = data;
   try {
-    const prevRaw = localStorage.getItem(META_STORAGE_KEY);
-    const prevMeta = prevRaw ? JSON.parse(prevRaw) : {};
-    localStorage.setItem(META_STORAGE_KEY, JSON.stringify({ ...prevMeta, ...metaOnly }));
+    localStorage.setItem(scopedKey(uid, 'meta'), JSON.stringify(metaOnly));
   } catch {
     // تجاهل
   }
   try {
-    localStorage.setItem(POSTS_STORAGE_KEY, JSON.stringify(posts));
+    localStorage.setItem(scopedKey(uid, 'posts'), JSON.stringify(posts));
   } catch {
     // تجاهل
   }
 
-  await saveToIndexedDB(data);
+  await saveToIndexedDB(uid, data);
 }
 
 function readRawFileAsDataUrl(file: File): Promise<string> {
@@ -220,137 +208,35 @@ function readRawFileAsDataUrl(file: File): Promise<string> {
 export default function ProfileTab() {
   const store = useAppStore() as Record<string, any>;
   const profile = store.profile || {};
-  const storePosts: Array<Record<string, any>> = Array.isArray(store.posts) ? store.posts : [];
   const friends: Array<Record<string, any>> = Array.isArray(store.friends)
     ? store.friends
     : Array.isArray(store.contacts)
       ? store.contacts
       : [];
 
-  const initialSaved = loadLocalSnapshot();
-
-  const fallbackStoreName =
-    profile.name && profile.name !== 'أنت' ? String(profile.name) : 'abobaker096605';
-
-  const [displayName, setDisplayName] = useState<string>(() =>
-    resolveNameFromStorage(fallbackStoreName)
-  );
-
-  useEffect(() => {
-    const syncName = () => {
-      setDisplayName(resolveNameFromStorage(fallbackStoreName));
-    };
-
-    syncName();
-    window.addEventListener('wasl-profile-updated', syncName);
-    window.addEventListener('storage', syncName);
-    return () => {
-      window.removeEventListener('wasl-profile-updated', syncName);
-      window.removeEventListener('storage', syncName);
-    };
-  }, [fallbackStoreName]);
-
+  const [currentUid, setCurrentUid] = useState<string>('');
+  const [displayName, setDisplayName] = useState<string>('مستخدم وِصل');
   const [activeSubTab, setActiveSubTab] = useState<ProfileSectionTab>('all');
-  const [coverImage, setCoverImage] = useState<string>(
-    initialSaved.coverImage || profile.coverImage || profile.cover || ''
-  );
-  const [avatarImage, setAvatarImage] = useState<string>(
-    initialSaved.avatarImage || profile.avatar || ''
-  );
-  const [isPublicAccount, setIsPublicAccount] = useState<boolean>(
-    typeof initialSaved.isPublicAccount === 'boolean'
-      ? initialSaved.isPublicAccount
-      : typeof profile.isPublic === 'boolean'
-        ? profile.isPublic
-        : true
-  );
+  const [coverImage, setCoverImage] = useState<string>('');
+  const [avatarImage, setAvatarImage] = useState<string>('');
+  const [isPublicAccount, setIsPublicAccount] = useState<boolean>(true);
 
   // تعديل التفاصيل الشخصية
   const [editingDetails, setEditingDetails] = useState(false);
-  const [bio, setBio] = useState<string>(
-    initialSaved.bio || profile.bio || 'مطوّر ومحب للتكنولوجيا. أعيش لحظاتي بهدوء.'
-  );
-  const [city, setCity] = useState<string>(
-    initialSaved.city || profile.city || profile.location || 'شندي'
-  );
-  const [hometown, setHometown] = useState<string>(
-    initialSaved.hometown || profile.hometown || 'شندي'
-  );
-  const [birthday, setBirthday] = useState<string>(
-    initialSaved.birthday || profile.birthday || '٢٠ سبتمبر ٢٠٠٢'
-  );
-  const [education, setEducation] = useState<string>(
-    initialSaved.education || profile.education || 'كلية التربية - معلمين'
-  );
-  const [interestsText, setInterestsText] = useState<string>(
-    initialSaved.interestsText ||
-      (Array.isArray(profile.interests) && profile.interests.length > 0
-        ? profile.interests.join('، ')
-        : 'PUBG Mobile، Garena Free Fire')
-  );
+  const [bio, setBio] = useState<string>(DEFAULT_BIO);
+  const [city, setCity] = useState<string>(DEFAULT_CITY);
+  const [hometown, setHometown] = useState<string>(DEFAULT_HOMETOWN);
+  const [birthday, setBirthday] = useState<string>(DEFAULT_BIRTHDAY);
+  const [education, setEducation] = useState<string>(DEFAULT_EDUCATION);
+  const [interestsText, setInterestsText] = useState<string>(DEFAULT_INTERESTS);
 
   // أبرز القصص
   const [highlights, setHighlights] = useState<Array<{ id: string; title: string; image?: string }>>(
-    Array.isArray(initialSaved.highlights) && initialSaved.highlights.length > 0
-      ? initialSaved.highlights
-      : Array.isArray(profile.highlights)
-        ? profile.highlights
-        : []
+    []
   );
 
-  const buildInitialPosts = (baseSaved: Partial<PersistedProfileData>): ActivityPostItem[] => {
-    const resolvedStartName = resolveNameFromStorage(fallbackStoreName);
-    const persistedList = Array.isArray(baseSaved.posts) ? baseSaved.posts : [];
-    const existingIds = new Set(persistedList.map((p) => p.id));
-
-    const extraFromStore: ActivityPostItem[] = storePosts
-      .filter((p) => !existingIds.has(String(p.id || '')))
-      .map((p, idx) => {
-        const img = p.image || p.imageUrl || p.photo;
-        const text = p.content ? String(p.content) : '';
-        const isAvatarUpdate =
-          text.includes('صورة ملفه الشخصي') || text.includes('صورة الملف الشخصي');
-        const isCoverUpdate = text.includes('صورة الغلاف');
-
-        let headline = `نشر ${resolvedStartName}`;
-        let kind: ActivityPostItem['kind'] = 'post';
-
-        if (isAvatarUpdate) {
-          headline = `قام ${resolvedStartName} بتحديث صورة ملفه الشخصي`;
-          kind = 'avatar';
-        } else if (isCoverUpdate) {
-          headline = `قام ${resolvedStartName} بتحديث صورة الغلاف`;
-          kind = 'cover';
-        } else if (img) {
-          headline = `نشر ${resolvedStartName} صورة`;
-          kind = 'photo';
-        }
-
-        return {
-          id: String(p.id || `store-post-${idx}`),
-          authorName: resolvedStartName,
-          authorAvatar:
-            baseSaved.avatarImage ||
-            (typeof p.authorAvatar === 'string' ? p.authorAvatar : undefined),
-          headline,
-          content: isAvatarUpdate || isCoverUpdate ? undefined : text || undefined,
-          image: typeof img === 'string' ? img : undefined,
-          createdAt: String(p.createdAt || 'الآن'),
-          kind,
-          liked: false,
-          likesCount: 0,
-          sharesCount: 0,
-          comments: [],
-        };
-      });
-
-    return [...persistedList, ...extraFromStore];
-  };
-
-  const [activityPosts, setActivityPosts] = useState<ActivityPostItem[]>(() =>
-    buildInitialPosts(initialSaved)
-  );
-  const [hydratedFromDB, setHydratedFromDB] = useState(false);
+  const [activityPosts, setActivityPosts] = useState<ActivityPostItem[]>([]);
+  const [hydratedUid, setHydratedUid] = useState<string>('');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [openCommentsPostId, setOpenCommentsPostId] = useState<string | null>(null);
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
@@ -359,49 +245,69 @@ export default function ProfileTab() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const highlightInputRef = useRef<HTMLInputElement | null>(null);
 
-  async function syncProfileToSupabase(overrides?: {
-    avatar_url?: string;
-    cover_url?: string;
-    bio?: string;
-    city?: string;
-    hometown?: string;
-    birthday?: string;
-    education?: string;
-  }): Promise<void> {
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData?.user?.id;
-      if (!userId) return;
-
-      await supabase.from('profiles').upsert(
-        {
-          id: userId,
-          full_name: displayName,
-          avatar_url: overrides?.avatar_url !== undefined ? overrides.avatar_url : avatarImage || null,
-          cover_url: overrides?.cover_url !== undefined ? overrides.cover_url : coverImage || null,
-          bio: overrides?.bio !== undefined ? overrides.bio : bio,
-          city: overrides?.city !== undefined ? overrides.city : city,
-          hometown: overrides?.hometown !== undefined ? overrides.hometown : hometown,
-          birthday: overrides?.birthday !== undefined ? overrides.birthday : birthday,
-          education: overrides?.education !== undefined ? overrides.education : education,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'id' }
-      );
-    } catch {
-      // يظل الحفظ المحلي شغالاً
-    }
-  }
+  const resetLocalViewForNewUser = (fallbackTitle: string) => {
+    setDisplayName(fallbackTitle);
+    setCoverImage('');
+    setAvatarImage('');
+    setBio(DEFAULT_BIO);
+    setCity(DEFAULT_CITY);
+    setHometown(DEFAULT_HOMETOWN);
+    setBirthday(DEFAULT_BIRTHDAY);
+    setEducation(DEFAULT_EDUCATION);
+    setInterestsText(DEFAULT_INTERESTS);
+    setIsPublicAccount(true);
+    setHighlights([]);
+    setActivityPosts([]);
+    setEditingDetails(false);
+    setOpenCommentsPostId(null);
+  };
 
   useEffect(() => {
     let active = true;
 
-    async function hydrateAll() {
-      const localSnap = loadLocalSnapshot();
-      const dbData = await loadFromIndexedDB();
+    async function loadForSessionUser(uid: string | null, email?: string | null, meta?: Record<string, any>) {
+      if (!active) return;
 
-      const mergedAvatar = dbData?.avatarImage || localSnap.avatarImage || '';
-      const mergedCover = dbData?.coverImage || localSnap.coverImage || '';
+      if (!uid) {
+        setCurrentUid('');
+        setHydratedUid('');
+        resetLocalViewForNewUser('مستخدم وِصل');
+        return;
+      }
+
+      if (currentUid && currentUid !== uid) {
+        setHydratedUid('');
+      }
+
+      setCurrentUid(uid);
+
+      const metaName =
+        typeof meta?.full_name === 'string' && meta.full_name.trim()
+          ? meta.full_name.trim()
+          : typeof meta?.name === 'string' && meta.name.trim()
+            ? meta.name.trim()
+            : '';
+      const metaAvatar =
+        typeof meta?.avatar_url === 'string' && meta.avatar_url.trim()
+          ? meta.avatar_url.trim()
+          : '';
+
+      const localSnap = loadLocalSnapshot(uid);
+      const dbData = await loadFromIndexedDB(uid);
+      if (!active) return;
+
+      const initialName =
+        localSnap.name ||
+        dbData?.name ||
+        metaName ||
+        (email ? email.split('@')[0] : '') ||
+        (typeof profile.name === 'string' && profile.name.trim() ? profile.name.trim() : '') ||
+        `مستخدم ${uid.slice(0, 6)}`;
+
+      const mergedAvatar =
+        dbData?.avatarImage || localSnap.avatarImage || metaAvatar || '';
+      const mergedCover =
+        dbData?.coverImage || localSnap.coverImage || '';
       const mergedPosts =
         Array.isArray(dbData?.posts) && dbData.posts.length > 0
           ? dbData.posts
@@ -409,71 +315,62 @@ export default function ProfileTab() {
             ? localSnap.posts
             : [];
 
-      if (active) {
-        if (mergedAvatar) setAvatarImage(mergedAvatar);
-        if (mergedCover) setCoverImage(mergedCover);
-        if (typeof (dbData?.bio ?? localSnap.bio) === 'string') {
-          setBio(String(dbData?.bio ?? localSnap.bio));
-        }
-        if (typeof (dbData?.city ?? localSnap.city) === 'string') {
-          setCity(String(dbData?.city ?? localSnap.city));
-        }
-        if (typeof (dbData?.hometown ?? localSnap.hometown) === 'string') {
-          setHometown(String(dbData?.hometown ?? localSnap.hometown));
-        }
-        if (typeof (dbData?.birthday ?? localSnap.birthday) === 'string') {
-          setBirthday(String(dbData?.birthday ?? localSnap.birthday));
-        }
-        if (typeof (dbData?.education ?? localSnap.education) === 'string') {
-          setEducation(String(dbData?.education ?? localSnap.education));
-        }
-        if (typeof (dbData?.interestsText ?? localSnap.interestsText) === 'string') {
-          setInterestsText(String(dbData?.interestsText ?? localSnap.interestsText));
-        }
-        if (Array.isArray(dbData?.highlights) && dbData.highlights.length > 0) {
-          setHighlights(dbData.highlights);
-        } else if (Array.isArray(localSnap.highlights) && localSnap.highlights.length > 0) {
-          setHighlights(localSnap.highlights);
-        }
-        if (mergedPosts.length > 0) {
-          setActivityPosts((prev) => {
-            const knownIds = new Set(prev.map((p) => p.id));
-            const brandNew = prev.filter((p) => !knownIds.has(p.id));
-            return [...brandNew, ...mergedPosts];
-          });
-        }
-      }
+      setDisplayName(initialName);
+      setAvatarImage(mergedAvatar);
+      setCoverImage(mergedCover);
+      setBio(String(dbData?.bio ?? localSnap.bio ?? DEFAULT_BIO));
+      setCity(String(dbData?.city ?? localSnap.city ?? DEFAULT_CITY));
+      setHometown(String(dbData?.hometown ?? localSnap.hometown ?? DEFAULT_HOMETOWN));
+      setBirthday(String(dbData?.birthday ?? localSnap.birthday ?? DEFAULT_BIRTHDAY));
+      setEducation(String(dbData?.education ?? localSnap.education ?? DEFAULT_EDUCATION));
+      setInterestsText(String(dbData?.interestsText ?? localSnap.interestsText ?? DEFAULT_INTERESTS));
+      setIsPublicAccount(
+        typeof (dbData?.isPublicAccount ?? localSnap.isPublicAccount) === 'boolean'
+          ? Boolean(dbData?.isPublicAccount ?? localSnap.isPublicAccount)
+          : true
+      );
+      setHighlights(
+        Array.isArray(dbData?.highlights) && dbData.highlights.length > 0
+          ? dbData.highlights
+          : Array.isArray(localSnap.highlights)
+            ? localSnap.highlights
+            : []
+      );
+      setActivityPosts(mergedPosts);
 
       try {
-        const { data: userData } = await supabase.auth.getUser();
-        const userId = userData?.user?.id;
+        const { data: remoteProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', uid)
+          .maybeSingle();
 
-        if (active && userId) {
-          const { data: remoteProfile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', userId)
-            .maybeSingle();
+        if (!active) return;
 
-          if (remoteProfile) {
-            if (remoteProfile.avatar_url) setAvatarImage(String(remoteProfile.avatar_url));
-            if (remoteProfile.cover_url) setCoverImage(String(remoteProfile.cover_url));
-            if (remoteProfile.bio) setBio(String(remoteProfile.bio));
-            if (remoteProfile.city) setCity(String(remoteProfile.city));
-            if (remoteProfile.hometown) setHometown(String(remoteProfile.hometown));
-            if (remoteProfile.birthday) setBirthday(String(remoteProfile.birthday));
-            if (remoteProfile.education) setEducation(String(remoteProfile.education));
+        let resolvedName = initialName;
+        if (remoteProfile) {
+          if (typeof remoteProfile.full_name === 'string' && remoteProfile.full_name.trim()) {
+            resolvedName = remoteProfile.full_name.trim();
+            setDisplayName(resolvedName);
           }
+          if (remoteProfile.avatar_url) setAvatarImage(String(remoteProfile.avatar_url));
+          if (remoteProfile.cover_url) setCoverImage(String(remoteProfile.cover_url));
+          if (remoteProfile.bio) setBio(String(remoteProfile.bio));
+          if (remoteProfile.city) setCity(String(remoteProfile.city));
+          if (remoteProfile.hometown) setHometown(String(remoteProfile.hometown));
+          if (remoteProfile.birthday) setBirthday(String(remoteProfile.birthday));
+          if (remoteProfile.education) setEducation(String(remoteProfile.education));
         }
 
-        let postsQuery = supabase.from('posts').select('*').order('created_at', { ascending: false });
-        if (userId) {
-          postsQuery = postsQuery.eq('user_id', userId);
-        }
+        const { data: supaPosts, error } = await supabase
+          .from('posts')
+          .select('*')
+          .eq('user_id', uid)
+          .order('created_at', { ascending: false });
 
-        const { data: supaPosts, error } = await postsQuery;
+        if (!active) return;
 
-        if (active && !error && Array.isArray(supaPosts) && supaPosts.length > 0) {
+        if (!error && Array.isArray(supaPosts) && supaPosts.length > 0) {
           const mappedRemote: ActivityPostItem[] = supaPosts.map((row: Record<string, any>) => {
             const kindVal: ActivityPostItem['kind'] =
               row.kind === 'avatar' ||
@@ -488,16 +385,16 @@ export default function ProfileTab() {
             return {
               id: `supa-${String(row.id)}`,
               dbId: String(row.id),
-              authorName: String(row.author_name || displayName),
+              authorName: String(row.author_name || resolvedName),
               headline:
                 String(row.headline || '') ||
                 (kindVal === 'avatar'
-                  ? `قام ${row.author_name || displayName} بتحديث صورة ملفه الشخصي`
+                  ? `قام ${row.author_name || resolvedName} بتحديث صورة ملفه الشخصي`
                   : kindVal === 'cover'
-                    ? `قام ${row.author_name || displayName} بتحديث صورة الغلاف`
+                    ? `قام ${row.author_name || resolvedName} بتحديث صورة الغلاف`
                     : kindVal === 'photo'
-                      ? `نشر ${row.author_name || displayName} صورة`
-                      : `نشر ${row.author_name || displayName}`),
+                      ? `نشر ${row.author_name || resolvedName} صورة`
+                      : `نشر ${row.author_name || resolvedName}`),
               content: row.content ? String(row.content) : undefined,
               image: row.image_url ? String(row.image_url) : undefined,
               createdAt: row.created_at
@@ -521,23 +418,34 @@ export default function ProfileTab() {
           });
         }
       } catch {
-        // يظل الحفظ المحلي شغالاً
+        // يظل الحفظ المحلي الخاص بالمستخدم شغالاً
       }
 
       if (active) {
-        setHydratedFromDB(true);
+        setHydratedUid(uid);
       }
     }
 
-    void hydrateAll();
+    void supabase.auth.getSession().then(({ data }) => {
+      const u = data.session?.user;
+      void loadForSessionUser(u?.id ?? null, u?.email, u?.user_metadata);
+    });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      const u = nextSession?.user;
+      void loadForSessionUser(u?.id ?? null, u?.email, u?.user_metadata);
+    });
+
     return () => {
       active = false;
+      sub.subscription.unsubscribe();
     };
-  }, [displayName]);
+  }, []);
 
   useEffect(() => {
-    if (!hydratedFromDB) return;
-    void saveAllPersistence({
+    if (!currentUid || hydratedUid !== currentUid) return;
+    void saveAllPersistence(currentUid, {
+      name: displayName,
       coverImage,
       avatarImage,
       bio,
@@ -551,7 +459,9 @@ export default function ProfileTab() {
       posts: activityPosts,
     });
   }, [
-    hydratedFromDB,
+    currentUid,
+    hydratedUid,
+    displayName,
     coverImage,
     avatarImage,
     bio,
@@ -565,10 +475,45 @@ export default function ProfileTab() {
     activityPosts,
   ]);
 
+  async function syncProfileToSupabase(overrides?: {
+    avatar_url?: string;
+    cover_url?: string;
+    bio?: string;
+    city?: string;
+    hometown?: string;
+    birthday?: string;
+    education?: string;
+  }): Promise<void> {
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const userId = userData?.user?.id || currentUid;
+      if (!userId) return;
+
+      await supabase.from('profiles').upsert(
+        {
+          id: userId,
+          full_name: displayName,
+          avatar_url: overrides?.avatar_url !== undefined ? overrides.avatar_url : avatarImage || null,
+          cover_url: overrides?.cover_url !== undefined ? overrides.cover_url : coverImage || null,
+          bio: overrides?.bio !== undefined ? overrides.bio : bio,
+          city: overrides?.city !== undefined ? overrides.city : city,
+          hometown: overrides?.hometown !== undefined ? overrides.hometown : hometown,
+          birthday: overrides?.birthday !== undefined ? overrides.birthday : birthday,
+          education: overrides?.education !== undefined ? overrides.education : education,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      );
+    } catch {
+      // يظل الحفظ المحلي الخاص بالمستخدم شغالاً
+    }
+  }
+
   async function uploadToWaslMedia(file: File, fallbackDataUrl: string): Promise<string> {
     try {
       const { data: userData } = await supabase.auth.getUser();
-      const uid = userData?.user?.id || 'guest';
+      const uid = userData?.user?.id || currentUid;
+      if (!uid) return fallbackDataUrl;
       const safeExt = (file.name.split('.').pop() || 'jpg').replace(/[^a-zA-Z0-9]/g, '');
       const filePath = `${uid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${safeExt || 'jpg'}`;
 
@@ -590,7 +535,8 @@ export default function ProfileTab() {
   async function persistPostToSupabase(item: ActivityPostItem): Promise<void> {
     try {
       const { data: userData } = await supabase.auth.getUser();
-      const userId = userData?.user?.id ?? null;
+      const userId = userData?.user?.id ?? (currentUid || null);
+      if (!userId) return;
 
       const { data: inserted, error } = await supabase
         .from('posts')
@@ -611,7 +557,7 @@ export default function ProfileTab() {
         );
       }
     } catch {
-      // يظل محفوظاً في IndexedDB و localStorage
+      // يظل محفوظاً محلياً ضمن مساحة المستخدم
     }
   }
 
@@ -653,19 +599,22 @@ export default function ProfileTab() {
     const nextPosts = [fullItem, ...activityPosts];
     setActivityPosts(nextPosts);
 
-    await saveAllPersistence({
-      coverImage,
-      avatarImage,
-      bio,
-      city,
-      hometown,
-      birthday,
-      education,
-      interestsText,
-      isPublicAccount,
-      highlights,
-      posts: nextPosts,
-    });
+    if (currentUid) {
+      await saveAllPersistence(currentUid, {
+        name: displayName,
+        coverImage,
+        avatarImage,
+        bio,
+        city,
+        hometown,
+        birthday,
+        education,
+        interestsText,
+        isPublicAccount,
+        highlights,
+        posts: nextPosts,
+      });
+    }
 
     await persistPostToSupabase(fullItem);
 
@@ -683,10 +632,12 @@ export default function ProfileTab() {
 
   const handleCoverChange = async (imageUrl: string): Promise<void> => {
     setCoverImage(imageUrl);
-    try {
-      localStorage.setItem(COVER_KEY, imageUrl);
-    } catch {
-      // تجاهل
+    if (currentUid) {
+      try {
+        localStorage.setItem(scopedKey(currentUid, 'cover'), imageUrl);
+      } catch {
+        // تجاهل
+      }
     }
     if (typeof store.updateProfile === 'function') {
       store.updateProfile({ coverImage: imageUrl, cover: imageUrl });
@@ -705,10 +656,12 @@ export default function ProfileTab() {
 
   const handleAvatarChange = async (imageUrl: string): Promise<void> => {
     setAvatarImage(imageUrl);
-    try {
-      localStorage.setItem(AVATAR_KEY, imageUrl);
-    } catch {
-      // تجاهل
+    if (currentUid) {
+      try {
+        localStorage.setItem(scopedKey(currentUid, 'avatar'), imageUrl);
+      } catch {
+        // تجاهل
+      }
     }
     if (typeof store.updateProfile === 'function') {
       store.updateProfile({ avatar: imageUrl });
@@ -736,19 +689,22 @@ export default function ProfileTab() {
       },
     ];
     setHighlights(nextHighlights);
-    await saveAllPersistence({
-      coverImage,
-      avatarImage,
-      bio,
-      city,
-      hometown,
-      birthday,
-      education,
-      interestsText,
-      isPublicAccount,
-      highlights: nextHighlights,
-      posts: activityPosts,
-    });
+    if (currentUid) {
+      await saveAllPersistence(currentUid, {
+        name: displayName,
+        coverImage,
+        avatarImage,
+        bio,
+        city,
+        hometown,
+        birthday,
+        education,
+        interestsText,
+        isPublicAccount,
+        highlights: nextHighlights,
+        posts: activityPosts,
+      });
+    }
   };
 
   const handleSaveDetails = async (e: React.FormEvent) => {
@@ -846,19 +802,22 @@ export default function ProfileTab() {
     const updated = activityPosts.filter((p) => p.id !== postId);
     setActivityPosts(updated);
 
-    await saveAllPersistence({
-      coverImage,
-      avatarImage,
-      bio,
-      city,
-      hometown,
-      birthday,
-      education,
-      interestsText,
-      isPublicAccount,
-      highlights,
-      posts: updated,
-    });
+    if (currentUid) {
+      await saveAllPersistence(currentUid, {
+        name: displayName,
+        coverImage,
+        avatarImage,
+        bio,
+        city,
+        hometown,
+        birthday,
+        education,
+        interestsText,
+        isPublicAccount,
+        highlights,
+        posts: updated,
+      });
+    }
 
     if (target?.dbId) {
       try {
