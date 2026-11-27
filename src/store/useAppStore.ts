@@ -1,17 +1,189 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { Conversation, Post, Story, User } from '@/types';
 import { currentUser, mockConversations, mockPosts, mockStories, mockUsers } from '@/data/mockData';
 
+/* =====================================================================
+ *  أدوات مساعدة
+ * ===================================================================== */
+
 let idCounter = 100;
-const nextId = () => `new-${idCounter++}`;
+// معرّف فريد حتى لا يتعارض مع بيانات محفوظة سابقاً
+const nextId = () => `new-${Date.now().toString(36)}-${idCounter++}`;
 
-let sharedProfile: User = currentUser;
-const profileListeners = new Set<(next: User) => void>();
-
-function setSharedProfile(next: User) {
-  sharedProfile = next;
-  profileListeners.forEach((fn) => fn(next));
+function clone<T>(value: T): T {
+  try {
+    if (typeof structuredClone === 'function') return structuredClone(value);
+  } catch {
+    // نتابع إلى الطريقة البديلة
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
 }
+
+/* =====================================================================
+ *  حالة التطبيق المرتبطة بالمستخدم (user_id)
+ * ===================================================================== */
+
+interface SharedState {
+  users: User[];
+  posts: Post[];
+  conversations: Conversation[];
+  stories: Story[];
+  profile: User;
+  activeConversationId: string | null;
+}
+
+// كل مفاتيح التخزين الخاصة بالحساب تبدأ بهذه البادئة + user_id
+const USER_KEY_PREFIX = 'wasl_user_';
+const ACTIVE_USER_KEY = 'wasl_active_user_id';
+
+const storageKeyFor = (userId: string) => `${USER_KEY_PREFIX}${userId}_state`;
+
+function createInitialState(): SharedState {
+  return {
+    users: clone(mockUsers),
+    posts: clone(mockPosts),
+    conversations: clone(mockConversations),
+    stories: clone(mockStories),
+    profile: clone(currentUser),
+    activeConversationId: mockConversations[0]?.id ?? null,
+  };
+}
+
+let activeUserId: string | null = null;
+let state: SharedState = createInitialState();
+const stateListeners = new Set<() => void>();
+
+function emit() {
+  stateListeners.forEach((fn) => fn());
+}
+
+function subscribeState(listener: () => void) {
+  stateListeners.add(listener);
+  return () => {
+    stateListeners.delete(listener);
+  };
+}
+
+function getState(): SharedState {
+  return state;
+}
+
+/** حفظ حالة الحساب الحالي فقط، تحت مفتاح يحمل user_id الخاص به */
+function persistState() {
+  if (!activeUserId) return;
+  try {
+    localStorage.setItem(storageKeyFor(activeUserId), JSON.stringify(state));
+    localStorage.setItem(ACTIVE_USER_KEY, activeUserId);
+  } catch {
+    // تجاهل أخطاء التخزين (امتلاء المساحة أو الوضع الخاص)
+  }
+}
+
+function loadPersistedState(userId: string): SharedState | null {
+  try {
+    const raw = localStorage.getItem(storageKeyFor(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SharedState>;
+    const base = createInitialState();
+    return {
+      users: Array.isArray(parsed.users) ? parsed.users : base.users,
+      posts: Array.isArray(parsed.posts) ? parsed.posts : base.posts,
+      conversations: Array.isArray(parsed.conversations) ? parsed.conversations : base.conversations,
+      stories: Array.isArray(parsed.stories) ? parsed.stories : base.stories,
+      profile: parsed.profile ? { ...base.profile, ...parsed.profile, id: userId } : { ...base.profile, id: userId },
+      activeConversationId:
+        parsed.activeConversationId !== undefined ? parsed.activeConversationId : base.activeConversationId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * حذف بيانات الحسابات من التخزين المحلي.
+ * - إن مُرّر exceptUserId: تُحذف بيانات كل الحسابات الأخرى ويبقى هذا الحساب.
+ * - إن لم يُمرَّر: تُحذف بيانات كل الحسابات (تسجيل الخروج).
+ * لا يمس مفتاح الثيم لأنه إعداد للجهاز وليس للحساب.
+ */
+function wipeUserStorage(exceptUserId?: string | null) {
+  const keepKey = exceptUserId ? storageKeyFor(exceptUserId) : null;
+
+  const wipeFrom = (storage: Storage) => {
+    try {
+      const toRemove: string[] = [];
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
+        if (!key) continue;
+        if (key === ACTIVE_USER_KEY) {
+          if (!exceptUserId) toRemove.push(key);
+          continue;
+        }
+        if (key.startsWith(USER_KEY_PREFIX) && key !== keepKey) toRemove.push(key);
+      }
+      toRemove.forEach((k) => storage.removeItem(k));
+    } catch {
+      // تجاهل
+    }
+  };
+
+  wipeFrom(localStorage);
+  wipeFrom(sessionStorage);
+}
+
+function updateState(updater: (s: SharedState) => Partial<SharedState>) {
+  state = { ...state, ...updater(state) };
+  persistState();
+  emit();
+}
+
+/* =====================================================================
+ *  واجهات التحكم بالحساب (تُستدعى من AuthGate)
+ * ===================================================================== */
+
+/**
+ * تفعيل حساب بعد تسجيل الدخول أو عند استعادة الجلسة.
+ * - إذا كان user_id مختلفاً عن الحساب النشط: تُفرَّغ بيانات الحساب السابق
+ *   من الذاكرة ومن التخزين المحلي بالكامل، ثم تُحمَّل بيانات الحساب الجديد.
+ * - seed: بيانات أولية للملف الشخصي (الاسم، الصورة...) للحسابات الجديدة فقط.
+ */
+export function activateUser(userId: string | null | undefined, seed?: Partial<User>) {
+  if (!userId) {
+    deactivateUser();
+    return;
+  }
+  if (activeUserId === userId) return;
+
+  // حذف بيانات أي حساب آخر (حتى لو كانت من جلسة سابقة قبل إغلاق المتصفح)
+  wipeUserStorage(userId);
+
+  const persisted = loadPersistedState(userId);
+  if (persisted) {
+    state = persisted;
+  } else {
+    const fresh = createInitialState();
+    state = { ...fresh, profile: { ...fresh.profile, ...(seed ?? {}), id: userId } };
+  }
+
+  activeUserId = userId;
+  persistState();
+  emit();
+}
+
+/** تسجيل الخروج: تفريغ كل بيانات الحساب من الحالة ومن التخزين المحلي */
+export function deactivateUser() {
+  wipeUserStorage();
+  activeUserId = null;
+  state = createInitialState();
+  emit();
+}
+
+export function getActiveUserId(): string | null {
+  return activeUserId;
+}
+
+/* =====================================================================
+ *  الثيم (إعداد للجهاز، لا يُمسح عند تسجيل الخروج)
+ * ===================================================================== */
 
 const THEME_STORAGE_KEY = 'wasl_dark_mode';
 
@@ -52,22 +224,153 @@ function setSharedDarkMode(next: boolean) {
   themeListeners.forEach((fn) => fn(next));
 }
 
-export function useAppStore() {
-  const [users, setUsers] = useState<User[]>(mockUsers);
-  const [posts, setPosts] = useState<Post[]>(mockPosts);
-  const [conversations, setConversations] = useState<Conversation[]>(mockConversations);
-  const [stories, setStories] = useState<Story[]>(mockStories);
-  const [profile, setProfile] = useState<User>(sharedProfile);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(mockConversations[0].id);
-  const [darkMode, setDarkMode] = useState<boolean>(sharedDarkMode);
+/* =====================================================================
+ *  الإجراءات (على مستوى الملف، تعمل على الحالة المشتركة للحساب الحالي)
+ * ===================================================================== */
 
-  useEffect(() => {
-    setProfile(sharedProfile);
-    profileListeners.add(setProfile);
-    return () => {
-      profileListeners.delete(setProfile);
+function addFriend(user: User) {
+  updateState((s) => ({
+    users: s.users.map((u) => (u.id === user.id ? { ...u, isFriend: true } : u)),
+    posts: s.posts.map((p) =>
+      p.author.id === user.id ? { ...p, author: { ...p.author, isFriend: true } } : p
+    ),
+  }));
+}
+
+function addContact(user: User) {
+  updateState((s) => ({
+    users: s.users.map((u) => (u.id === user.id ? { ...u, isContact: true, isFriend: true } : u)),
+    posts: s.posts.map((p) =>
+      p.author.id === user.id ? { ...p, author: { ...p.author, isContact: true, isFriend: true } } : p
+    ),
+  }));
+}
+
+function addContactByHandle(handle: string): { ok: boolean; error?: string } {
+  const clean = handle.trim().replace(/^@/, '').replace(/\s+/g, '');
+  if (!clean) return { ok: false, error: 'الرجاء إدخال رقم هاتف أو اسم مستخدم' };
+  const found = state.users.find(
+    (u) =>
+      u.username.replace(/^@/, '') === clean.replace(/^@/, '') ||
+      u.phone.replace(/\s+/g, '') === clean.replace(/^\+?966/, '+966').replace(/\s+/g, '')
+  );
+  if (!found) return { ok: false, error: 'لم نجد مستخدماً بهذا الاسم أو الرقم' };
+  if (found.isContact) return { ok: false, error: 'هذا الشخص موجود مسبقاً في جهات اتصالك' };
+  addContact(found);
+  return { ok: true };
+}
+
+function toggleLike(postId: string) {
+  updateState((s) => ({
+    posts: s.posts.map((p) =>
+      p.id === postId
+        ? { ...p, likedByMe: !p.likedByMe, likes: p.likedByMe ? p.likes - 1 : p.likes + 1 }
+        : p
+    ),
+  }));
+}
+
+function addComment(postId: string, text: string) {
+  updateState((s) => ({
+    posts: s.posts.map((p) =>
+      p.id === postId
+        ? {
+            ...p,
+            comments: [...p.comments, { id: nextId(), author: s.profile, text, createdAt: 'الآن' }],
+          }
+        : p
+    ),
+  }));
+}
+
+function createPost(text: string, imageUrl?: string) {
+  updateState((s) => ({
+    posts: [
+      {
+        id: nextId(),
+        author: s.profile,
+        text,
+        imageUrl,
+        createdAt: 'الآن',
+        likes: 0,
+        likedByMe: false,
+        comments: [],
+      },
+      ...s.posts,
+    ],
+  }));
+}
+
+function addPost(newPost: Post | Record<string, any>) {
+  updateState((s) => {
+    const normalized: Post = {
+      id: String(newPost.id || nextId()),
+      author: newPost.author || s.profile,
+      text: String(newPost.text ?? newPost.content ?? ''),
+      imageUrl: newPost.imageUrl || newPost.image,
+      createdAt: String(newPost.createdAt || 'الآن'),
+      likes: Number(newPost.likes ?? 0),
+      likedByMe: Boolean(newPost.likedByMe ?? false),
+      comments: Array.isArray(newPost.comments) ? newPost.comments : [],
     };
-  }, []);
+    return {
+      posts: s.posts.some((p) => p.id === normalized.id) ? s.posts : [normalized, ...s.posts],
+    };
+  });
+}
+
+function sendMessage(conversationId: string, text: string) {
+  updateState((s) => ({
+    conversations: s.conversations.map((c) =>
+      c.id === conversationId
+        ? {
+            ...c,
+            messages: [...c.messages, { id: nextId(), senderId: 'me', text, createdAt: 'الآن' }],
+          }
+        : c
+    ),
+  }));
+}
+
+function openConversation(conversationId: string) {
+  updateState((s) => ({
+    activeConversationId: conversationId,
+    conversations: s.conversations.map((c) => (c.id === conversationId ? { ...c, unread: 0 } : c)),
+  }));
+}
+
+function startConversationWith(user: User) {
+  const existing = state.conversations.find((c) => c.user.id === user.id);
+  if (existing) {
+    openConversation(existing.id);
+    return;
+  }
+  const id = nextId();
+  updateState((s) => ({
+    conversations: [{ id, user, messages: [], unread: 0 }, ...s.conversations],
+    activeConversationId: id,
+  }));
+}
+
+function markStorySeen(storyId: string) {
+  updateState((s) => ({
+    stories: s.stories.map((st) => (st.id === storyId ? { ...st, seen: true } : st)),
+  }));
+}
+
+function updateProfile(updates: Partial<User>) {
+  // لا يُسمح بتغيير المعرّف: يبقى مرتبطاً بـ user_id الخاص بالجلسة
+  const { id: _ignored, ...safeUpdates } = updates as Partial<User> & { id?: string };
+  updateState((s) => ({ profile: { ...s.profile, ...safeUpdates } }));
+}
+
+/* =====================================================================
+ *  الـ Hook
+ * ===================================================================== */
+
+export function useAppStore() {
+  const snapshot = useSyncExternalStore(subscribeState, getState, getState);
+  const [darkMode, setDarkMode] = useState<boolean>(sharedDarkMode);
 
   useEffect(() => {
     applyThemeToDocument(sharedDarkMode);
@@ -82,140 +385,12 @@ export function useAppStore() {
     setSharedDarkMode(!sharedDarkMode);
   }, []);
 
+  const { users, posts, conversations, stories, profile, activeConversationId } = snapshot;
+
   const totalUnread = useMemo(
     () => conversations.reduce((sum, c) => sum + c.unread, 0),
     [conversations]
   );
-
-  const addFriend = useCallback((user: User) => {
-    setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, isFriend: true } : u)));
-    setPosts((prev) =>
-      prev.map((p) =>
-        p.author.id === user.id ? { ...p, author: { ...p.author, isFriend: true } } : p
-      )
-    );
-  }, []);
-
-  const addContact = useCallback((user: User) => {
-    setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, isContact: true, isFriend: true } : u)));
-    setPosts((prev) =>
-      prev.map((p) =>
-        p.author.id === user.id ? { ...p, author: { ...p.author, isContact: true, isFriend: true } } : p
-      )
-    );
-  }, []);
-
-  const addContactByHandle = useCallback((handle: string): { ok: boolean; error?: string } => {
-    const clean = handle.trim().replace(/^@/, '').replace(/\s+/g, '');
-    if (!clean) return { ok: false, error: 'الرجاء إدخال رقم هاتف أو اسم مستخدم' };
-    const found = users.find(
-      (u) =>
-        u.username.replace(/^@/, '') === clean.replace(/^@/, '') ||
-        u.phone.replace(/\s+/g, '') === clean.replace(/^\+?966/, '+966').replace(/\s+/g, '')
-    );
-    if (!found) return { ok: false, error: 'لم نجد مستخدماً بهذا الاسم أو الرقم' };
-    if (found.isContact) return { ok: false, error: 'هذا الشخص موجود مسبقاً في جهات اتصالك' };
-    addContact(found);
-    return { ok: true };
-  }, [users, addContact]);
-
-  const toggleLike = useCallback((postId: string) => {
-    setPosts((prev) =>
-      prev.map((p) =>
-        p.id === postId
-          ? { ...p, likedByMe: !p.likedByMe, likes: p.likedByMe ? p.likes - 1 : p.likes + 1 }
-          : p
-      )
-    );
-  }, []);
-
-  const addComment = useCallback((postId: string, text: string) => {
-    setPosts((prev) =>
-      prev.map((p) =>
-        p.id === postId
-          ? {
-              ...p,
-              comments: [
-                ...p.comments,
-                { id: nextId(), author: sharedProfile, text, createdAt: 'الآن' },
-              ],
-            }
-          : p
-      )
-    );
-  }, []);
-
-  const createPost = useCallback((text: string, imageUrl?: string) => {
-    setPosts((prev) => [
-      {
-        id: nextId(),
-        author: sharedProfile,
-        text,
-        imageUrl,
-        createdAt: 'الآن',
-        likes: 0,
-        likedByMe: false,
-        comments: [],
-      },
-      ...prev,
-    ]);
-  }, []);
-
-  const addPost = useCallback((newPost: Post | Record<string, any>) => {
-    const normalized: Post = {
-      id: String(newPost.id || nextId()),
-      author: newPost.author || sharedProfile,
-      text: String(newPost.text ?? newPost.content ?? ''),
-      imageUrl: newPost.imageUrl || newPost.image,
-      createdAt: String(newPost.createdAt || 'الآن'),
-      likes: Number(newPost.likes ?? 0),
-      likedByMe: Boolean(newPost.likedByMe ?? false),
-      comments: Array.isArray(newPost.comments) ? newPost.comments : [],
-    };
-    setPosts((prev) => (prev.some((p) => p.id === normalized.id) ? prev : [normalized, ...prev]));
-  }, []);
-
-  const sendMessage = useCallback((conversationId: string, text: string) => {
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id === conversationId
-          ? {
-              ...c,
-              messages: [
-                ...c.messages,
-                { id: nextId(), senderId: 'me', text, createdAt: 'الآن' },
-              ],
-            }
-          : c
-      )
-    );
-  }, []);
-
-  const openConversation = useCallback((conversationId: string) => {
-    setActiveConversationId(conversationId);
-    setConversations((prev) =>
-      prev.map((c) => (c.id === conversationId ? { ...c, unread: 0 } : c))
-    );
-  }, []);
-
-  const startConversationWith = useCallback((user: User) => {
-    const existing = conversations.find((c) => c.user.id === user.id);
-    if (existing) {
-      openConversation(existing.id);
-      return;
-    }
-    const id = nextId();
-    setConversations((prev) => [{ id, user, messages: [], unread: 0 }, ...prev]);
-    setActiveConversationId(id);
-  }, [conversations, openConversation]);
-
-  const markStorySeen = useCallback((storyId: string) => {
-    setStories((prev) => prev.map((s) => (s.id === storyId ? { ...s, seen: true } : s)));
-  }, []);
-
-  const updateProfile = useCallback((updates: Partial<User>) => {
-    setSharedProfile({ ...sharedProfile, ...updates });
-  }, []);
 
   const discoverPeople = useMemo(() => users.filter((u) => !u.isFriend), [users]);
   const contacts = useMemo(() => users.filter((u) => u.isContact), [users]);
@@ -246,5 +421,3 @@ export function useAppStore() {
     updateProfile,
   };
 }
-
-export type AppStore = ReturnType<typeof useAppStore>;
