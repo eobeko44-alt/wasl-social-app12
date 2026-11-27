@@ -16,7 +16,6 @@ import {
   Share2,
   Trash2,
   Send,
-  BadgeCheck,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { supabase } from '@/lib/supabase';
@@ -65,20 +64,43 @@ const VERIFIED_FOUNDER_IDS = new Set<string>([
   '9925c38d-c91d-47b6-9da2-f9042d4142d4',
 ]);
 
-function isVerifiedFounder(userId?: string | null): boolean {
-  if (!userId || typeof userId !== 'string') return false;
-  return VERIFIED_FOUNDER_IDS.has(userId.trim());
+const VERIFIED_FOUNDER_EMAILS = new Set<string>([
+  'abobaker096605@gmail.com',
+]);
+
+function isVerifiedFounder(userId?: string | null, email?: string | null): boolean {
+  if (userId && typeof userId === 'string' && VERIFIED_FOUNDER_IDS.has(userId.trim())) {
+    return true;
+  }
+  if (
+    email &&
+    typeof email === 'string' &&
+    VERIFIED_FOUNDER_EMAILS.has(email.trim().toLowerCase())
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function VerifiedBlueBadge({ size = 18 }: { size?: number }) {
   return (
-    <span
-      title="حساب موثّق رسمياً"
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
       aria-label="حساب موثّق رسمياً"
-      className="inline-flex items-center justify-center shrink-0 text-[#1877F2]"
+      className="inline-block shrink-0 align-middle"
     >
-      <BadgeCheck size={size} className="fill-[#1877F2] text-white" />
-    </span>
+      <circle cx="12" cy="12" r="10" fill="#1877F2" />
+      <path
+        d="M8.5 12.3L10.8 14.6L15.8 9.6"
+        stroke="#FFFFFF"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -226,6 +248,7 @@ export default function ProfileTab() {
       : [];
 
   const [currentUid, setCurrentUid] = useState<string>('');
+  const [currentEmail, setCurrentEmail] = useState<string>('');
   const [displayName, setDisplayName] = useState<string>('مستخدم وِصل');
   const [activeSubTab, setActiveSubTab] = useState<ProfileSectionTab>('all');
   const [coverImage, setCoverImage] = useState<string>('');
@@ -254,7 +277,7 @@ export default function ProfileTab() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const highlightInputRef = useRef<HTMLInputElement | null>(null);
 
-  const isFounderAccount = isVerifiedFounder(currentUid);
+  const isFounderAccount = isVerifiedFounder(currentUid, currentEmail);
 
   const resetLocalViewForNewUser = (fallbackTitle: string) => {
     setDisplayName(fallbackTitle);
@@ -285,6 +308,7 @@ export default function ProfileTab() {
 
       if (!uid) {
         setCurrentUid('');
+        setCurrentEmail('');
         setHydratedUid('');
         resetLocalViewForNewUser('مستخدم وِصل');
         return;
@@ -295,6 +319,7 @@ export default function ProfileTab() {
       }
 
       setCurrentUid(uid);
+      setCurrentEmail(email || '');
 
       const metaName =
         typeof meta?.full_name === 'string' && meta.full_name.trim()
