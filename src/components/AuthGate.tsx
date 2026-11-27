@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { useAppStore } from '@/store/useAppStore';
+import { activateUser } from '@/store/useAppStore';
 
 type AuthMode = 'phone' | 'email';
 type Gender = 'male' | 'female' | '';
@@ -12,17 +12,12 @@ interface SavedAccount {
   mode: AuthMode;
   username: string;
   avatar?: string;
-  password?: string;
 }
 
 const SAVED_ACCOUNTS_KEY = 'wasl_saved_accounts_v1';
-const LAST_PASSWORD_KEY = 'wasl_last_session_pass_v1';
-const LAST_IDENTIFIER_KEY = 'wasl_last_session_id_v1';
 const toPhoneAuthEmail = (p: string) => `${p.replace(/\D/g, '')}@wasl-phone.local`;
 
 let memoryAccounts: SavedAccount[] = [];
-let memoryPassword = '';
-let memoryIdentifier = '';
 
 function isRealEmail(val: string): boolean {
   const clean = val.trim().toLowerCase();
@@ -34,25 +29,6 @@ function isValidPhone(val: string): boolean {
   if (!clean || clean.includes('@') || /[a-zA-Z]/.test(clean)) return false;
   const digits = clean.replace(/\D/g, '');
   return digits.length >= 7;
-}
-
-function writeLastCredentials(identifier: string, secret: string) {
-  const cleanPass = secret.trim();
-  const cleanId = identifier.trim();
-  if (cleanPass) memoryPassword = cleanPass;
-  if (cleanId) memoryIdentifier = cleanId;
-  try {
-    if (cleanPass) {
-      window.localStorage.setItem(LAST_PASSWORD_KEY, cleanPass);
-      window.sessionStorage?.setItem(LAST_PASSWORD_KEY, cleanPass);
-    }
-    if (cleanId) {
-      window.localStorage.setItem(LAST_IDENTIFIER_KEY, cleanId);
-      window.sessionStorage?.setItem(LAST_IDENTIFIER_KEY, cleanId);
-    }
-  } catch {
-    // ignore storage errors
-  }
 }
 
 function buildUsername(name: string, digits: string, uid?: string): string {
@@ -69,8 +45,20 @@ function loadSavedAccounts(): SavedAccount[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        memoryAccounts = parsed;
-        return parsed;
+        const cleaned: SavedAccount[] = parsed
+          .filter((item) => item && typeof item.id === 'string' && typeof item.identifier === 'string')
+          .map((item) => ({
+            id: item.id,
+            name: String(item.name || ''),
+            identifier: String(item.identifier || ''),
+            mode: item.mode === 'phone' ? 'phone' : 'email',
+            username: String(item.username || '@wasl_user'),
+            avatar: typeof item.avatar === 'string' ? item.avatar : undefined,
+          }));
+        if (cleaned.length > 0) {
+          memoryAccounts = cleaned;
+          return cleaned;
+        }
       }
     }
   } catch {
@@ -89,7 +77,10 @@ function persistSavedAccounts(list: SavedAccount[]) {
   }
 }
 
-function resolveAccountLink(rawId: string, rawMode?: AuthMode): {
+function resolveAccountLink(
+  rawId: string,
+  rawMode?: AuthMode
+): {
   mode: AuthMode;
   identifier: string;
 } | null {
@@ -116,7 +107,6 @@ function resolveAccountLink(rawId: string, rawMode?: AuthMode): {
 }
 
 export default function AuthGate() {
-  const { updateProfile } = useAppStore();
   const [isSignUp, setIsSignUp] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [mode, setMode] = useState<AuthMode>('email');
@@ -142,7 +132,10 @@ export default function AuthGate() {
     if (!link) return;
 
     const normalizedAcc: SavedAccount = {
-      ...acc,
+      id: acc.id,
+      name: acc.name,
+      username: acc.username,
+      avatar: acc.avatar,
       mode: link.mode,
       identifier: link.identifier,
     };
@@ -160,14 +153,11 @@ export default function AuthGate() {
     });
   };
 
-  const syncLoggedInUserProfile = async (
-    user: {
-      id?: string;
-      email?: string | null;
-      user_metadata?: Record<string, unknown>;
-    } | null,
-    explicitPassword?: string
-  ) => {
+  const syncLoggedInUserProfile = async (user: {
+    id?: string;
+    email?: string | null;
+    user_metadata?: Record<string, unknown>;
+  } | null) => {
     if (!user?.id) return;
     const meta = user.user_metadata || {};
     const rawEmail = String(user.email || '').trim().toLowerCase();
@@ -225,8 +215,7 @@ export default function AuthGate() {
       user.id
     );
 
-    updateProfile({
-      id: user.id,
+    activateUser(user.id, {
       name: resolvedName,
       username: handle,
       email: isRealEmail(rawEmail) ? rawEmail : '',
@@ -247,7 +236,6 @@ export default function AuthGate() {
         mode: link.mode,
         username: handle,
         avatar: resolvedAvatar || existing?.avatar,
-        password: explicitPassword || existing?.password,
       });
     }
   };
@@ -287,21 +275,7 @@ export default function AuthGate() {
     });
   };
 
-  const isMatchingSavedSecret = (savedId: string, link: { mode: AuthMode; identifier: string }) => {
-    const cleanSaved = savedId.trim().toLowerCase();
-    const cleanTarget = link.identifier.trim().toLowerCase();
-    if (!cleanSaved || !cleanTarget) return false;
-
-    if (link.mode === 'email') {
-      return cleanSaved === cleanTarget;
-    }
-
-    const digitsA = cleanSaved.replace(/\D/g, '');
-    const digitsB = cleanTarget.replace(/\D/g, '');
-    return Boolean(digitsA && digitsB && digitsA === digitsB);
-  };
-
-  const handleSelectSavedAccount = async (acc: SavedAccount) => {
+  const handleSelectSavedAccount = (acc: SavedAccount) => {
     setErr(null);
     setMsg(null);
     setForgotOpen(false);
@@ -322,43 +296,7 @@ export default function AuthGate() {
       setEmail('');
     }
     if (acc.name) setName(acc.name);
-
-    const effectivePassword =
-      acc.password ||
-      (memoryPassword && isMatchingSavedSecret(memoryIdentifier, link) ? memoryPassword : '') ||
-      (() => {
-        try {
-          const savedId = window.localStorage.getItem(LAST_IDENTIFIER_KEY) || '';
-          const savedPass = window.localStorage.getItem(LAST_PASSWORD_KEY) || '';
-          if (savedPass && isMatchingSavedSecret(savedId, link)) {
-            return savedPass;
-          }
-        } catch {
-          // ignore
-        }
-        return '';
-      })();
-
-    if (effectivePassword) {
-      setPassword(effectivePassword);
-      writeLastCredentials(link.identifier, effectivePassword);
-      setLoading(true);
-      const authEmail =
-        link.mode === 'email'
-          ? link.identifier
-          : toPhoneAuthEmail(link.identifier.replace(/\D/g, ''));
-
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: authEmail,
-        password: effectivePassword,
-      });
-      setLoading(false);
-      if (!error && data.user) {
-        await syncLoggedInUserProfile(data.user, effectivePassword);
-        return;
-      }
-    }
-
+    setPassword('');
     setShowLoginForm(true);
   };
 
@@ -444,11 +382,8 @@ export default function AuthGate() {
       return;
     }
 
-    const activeIdentifier = mode === 'phone' ? cleanPhone : cleanEmail;
     const target = mode === 'phone' ? toPhoneAuthEmail(digits) : cleanEmail;
     const handle = buildUsername(cleanName || 'user', digits);
-
-    writeLastCredentials(activeIdentifier, password);
 
     if (isSignUp) {
       const { data, error } = await supabase.auth.signUp({
@@ -481,7 +416,7 @@ export default function AuthGate() {
           } catch {
             // تجاهل
           }
-          await syncLoggedInUserProfile(data.user, password);
+          await syncLoggedInUserProfile(data.user);
         }
         setMsg(
           data.session
@@ -494,7 +429,7 @@ export default function AuthGate() {
       if (error) {
         setErr('البيانات غير صحيحة أو الحساب غير موجود.');
       } else if (data.user) {
-        await syncLoggedInUserProfile(data.user, password);
+        await syncLoggedInUserProfile(data.user);
       }
     }
     setLoading(false);
@@ -527,7 +462,7 @@ export default function AuthGate() {
                 <button
                   type="button"
                   disabled={loading}
-                  onClick={() => void handleSelectSavedAccount(acc)}
+                  onClick={() => handleSelectSavedAccount(acc)}
                   className="flex flex-1 items-center gap-3 text-right min-w-0 disabled:opacity-60"
                 >
                   {acc.avatar ? (
