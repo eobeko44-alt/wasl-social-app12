@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { activateUser } from '@/store/useAppStore';
 
@@ -117,6 +118,7 @@ export default function AuthGate() {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>(() => loadSavedAccounts());
   const [showLoginForm, setShowLoginForm] = useState<boolean>(() => loadSavedAccounts().length === 0);
@@ -297,6 +299,7 @@ export default function AuthGate() {
     }
     if (acc.name) setName(acc.name);
     setPassword('');
+    setShowPassword(false);
     setShowLoginForm(true);
   };
 
@@ -508,6 +511,7 @@ export default function AuthGate() {
                 setPhone('');
                 setEmail('');
                 setPassword('');
+                setShowPassword(false);
                 setShowLoginForm(true);
               }}
               className="w-full rounded-xl border border-slate-700 bg-slate-950/80 py-2.5 text-xs font-bold text-slate-200 hover:border-cyan-500/40 transition"
@@ -525,6 +529,7 @@ export default function AuthGate() {
                 setPhone('');
                 setEmail('');
                 setPassword('');
+                setShowPassword(false);
                 setStep(1);
                 setIsSignUp(true);
               }}
@@ -678,16 +683,26 @@ export default function AuthGate() {
                   />
                 )}
 
-                <input
-                  type="password"
-                  dir="ltr"
-                  required
-                  minLength={6}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="كلمة المرور"
-                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-sm text-white"
-                />
+                <div className="relative w-full">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    dir="ltr"
+                    required
+                    minLength={6}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="كلمة المرور"
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 pr-10 text-sm text-white focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
 
                 {!isSignUp && (
                   <div className="flex justify-end">
@@ -768,6 +783,7 @@ export default function AuthGate() {
               setPhone('');
               setEmail('');
               setPassword('');
+              setShowPassword(false);
               setStep(1);
               setIsSignUp(!isSignUp);
             }}
