@@ -94,6 +94,17 @@ interface PersistedProfileData {
   posts: ActivityPostItem[];
 }
 
+interface SwitchedAccountPayload {
+  id: string;
+  name: string;
+  avatar?: string;
+  cover?: string;
+  bio?: string;
+  city?: string;
+}
+
+const ACTIVE_SWITCHED_ACCOUNT_KEY = 'wasl_active_switched_account_v1';
+
 const VERIFIED_FOUNDER_IDS = new Set<string>([
   '9925c38d-c91d-47b6-9da2-f9042d4142d4',
 ]);
@@ -257,6 +268,25 @@ const DEFAULT_FOLLOWING = 120;
 
 function scopedKey(uid: string, suffix: string): string {
   return `${STORAGE_PREFIX}${uid}_${suffix}`;
+}
+
+function readActiveSwitchedAccount(): SwitchedAccountPayload | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_SWITCHED_ACCOUNT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.id || !parsed?.name) return null;
+    return {
+      id: String(parsed.id),
+      name: String(parsed.name),
+      avatar: typeof parsed.avatar === 'string' && parsed.avatar.trim() ? parsed.avatar.trim() : undefined,
+      cover: typeof parsed.cover === 'string' && parsed.cover.trim() ? parsed.cover.trim() : undefined,
+      bio: typeof parsed.bio === 'string' ? parsed.bio : undefined,
+      city: typeof parsed.city === 'string' ? parsed.city : undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function openProfileDB(): Promise<IDBDatabase | null> {
@@ -485,7 +515,10 @@ export default function ProfileTab() {
     ) {
       if (!active) return;
 
-      if (!uid) {
+      const switched = readActiveSwitchedAccount();
+      const effectiveSessionUid = switched?.id || uid || '';
+
+      if (!effectiveSessionUid) {
         setCurrentUid('');
         setCurrentEmail('');
         setHydratedUid('');
@@ -493,14 +526,14 @@ export default function ProfileTab() {
         return;
       }
 
-      if (currentUid && currentUid !== uid) {
+      if (currentUid && currentUid !== effectiveSessionUid) {
         setHydratedUid('');
       }
 
-      setCurrentUid(uid);
+      setCurrentUid(effectiveSessionUid);
       setCurrentEmail(email || '');
 
-      const founder = isVerifiedFounder(uid, email);
+      const founder = isVerifiedFounder(effectiveSessionUid, email);
       const fallbackFollowers = founder ? DEFAULT_FOLLOWERS : 0;
       const fallbackFollowing = founder ? DEFAULT_FOLLOWING : 0;
 
@@ -515,45 +548,60 @@ export default function ProfileTab() {
           ? meta.avatar_url.trim()
           : '';
 
-      const localSnap = loadLocalSnapshot(uid);
+      const localSnap = loadLocalSnapshot(effectiveSessionUid);
       const initialName =
+        (switched?.id === effectiveSessionUid && switched?.name ? switched.name.trim() : '') ||
         localSnap.name ||
         metaName ||
         (email ? email.split('@')[0] : '') ||
         (typeof profile.name === 'string' && profile.name.trim() ? profile.name.trim() : '') ||
-        `مستخدم ${uid.slice(0, 6)}`;
+        `مستخدم ${effectiveSessionUid.slice(0, 6)}`;
 
       setDisplayName(initialName);
-      if (localSnap.avatarImage || metaAvatar) {
-        setAvatarImage(localSnap.avatarImage || metaAvatar);
-      }
-      if (localSnap.coverImage) {
-        setCoverImage(localSnap.coverImage);
-      }
-      if (localSnap.bio) setBio(String(localSnap.bio));
-      if (localSnap.city) setCity(String(localSnap.city));
-      if (localSnap.hometown) setHometown(String(localSnap.hometown));
-      if (localSnap.birthday) setBirthday(String(localSnap.birthday));
-      if (localSnap.education) setEducation(String(localSnap.education));
-      if (localSnap.interestsText) setInterestsText(String(localSnap.interestsText));
+
+      const initialAvatar =
+        (switched?.id === effectiveSessionUid && switched?.avatar ? switched.avatar : '') ||
+        localSnap.avatarImage ||
+        metaAvatar ||
+        '';
+      setAvatarImage(initialAvatar);
+
+      const initialCover =
+        (switched?.id === effectiveSessionUid && switched?.cover ? switched.cover : '') ||
+        localSnap.coverImage ||
+        '';
+      setCoverImage(initialCover);
+
+      setBio(
+        (switched?.id === effectiveSessionUid && switched?.bio) ||
+          (localSnap.bio ? String(localSnap.bio) : DEFAULT_BIO)
+      );
+      setCity(
+        (switched?.id === effectiveSessionUid && switched?.city) ||
+          (localSnap.city ? String(localSnap.city) : DEFAULT_CITY)
+      );
+      setHometown(localSnap.hometown ? String(localSnap.hometown) : DEFAULT_HOMETOWN);
+      setBirthday(localSnap.birthday ? String(localSnap.birthday) : DEFAULT_BIRTHDAY);
+      setEducation(localSnap.education ? String(localSnap.education) : DEFAULT_EDUCATION);
+      setInterestsText(localSnap.interestsText ? String(localSnap.interestsText) : DEFAULT_INTERESTS);
       setFollowersCount(
         typeof localSnap.followersCount === 'number' ? localSnap.followersCount : fallbackFollowers
       );
       setFollowingCount(
         typeof localSnap.followingCount === 'number' ? localSnap.followingCount : fallbackFollowing
       );
-      if (Array.isArray(localSnap.followersList)) setFollowersList(localSnap.followersList);
-      if (Array.isArray(localSnap.followingList)) setFollowingList(localSnap.followingList);
-      if (Array.isArray(localSnap.highlights)) setHighlights(localSnap.highlights);
-      if (Array.isArray(localSnap.posts)) setActivityPosts(localSnap.posts);
+      setFollowersList(Array.isArray(localSnap.followersList) ? localSnap.followersList : []);
+      setFollowingList(Array.isArray(localSnap.followingList) ? localSnap.followingList : []);
+      setHighlights(Array.isArray(localSnap.highlights) ? localSnap.highlights : []);
+      setActivityPosts(Array.isArray(localSnap.posts) ? localSnap.posts : []);
 
-      const dbData = await loadFromIndexedDB(uid);
+      const dbData = await loadFromIndexedDB(effectiveSessionUid);
       if (!active) return;
 
       if (dbData) {
-        if (dbData.name) setDisplayName(dbData.name);
-        if (dbData.avatarImage) setAvatarImage(dbData.avatarImage);
-        if (dbData.coverImage) setCoverImage(dbData.coverImage);
+        if (dbData.name && !switched?.name) setDisplayName(dbData.name);
+        if (dbData.avatarImage && !switched?.avatar) setAvatarImage(dbData.avatarImage);
+        if (dbData.coverImage && !switched?.cover) setCoverImage(dbData.coverImage);
         if (dbData.bio) setBio(String(dbData.bio));
         if (dbData.city) setCity(String(dbData.city));
         if (dbData.hometown) setHometown(String(dbData.hometown));
@@ -579,7 +627,7 @@ export default function ProfileTab() {
         const { data: remoteProfile } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', uid)
+          .eq('id', effectiveSessionUid)
           .maybeSingle();
 
         if (!active) return;
@@ -602,7 +650,7 @@ export default function ProfileTab() {
         const { data: supaPosts, error } = await supabase
           .from('posts')
           .select('*')
-          .eq('user_id', uid)
+          .eq('user_id', effectiveSessionUid)
           .order('created_at', { ascending: false })
           .limit(30);
 
@@ -663,7 +711,7 @@ export default function ProfileTab() {
       }
 
       if (active) {
-        setHydratedUid(uid);
+        setHydratedUid(effectiveSessionUid);
       }
     }
 
@@ -677,9 +725,26 @@ export default function ProfileTab() {
       void loadForSessionUser(u?.id ?? null, u?.email, u?.user_metadata);
     });
 
+    const handleAccountSwitched = async (e: Event) => {
+      const customEvent = e as CustomEvent<SwitchedAccountPayload>;
+      const detail = customEvent?.detail || readActiveSwitchedAccount();
+      if (!detail?.id) return;
+
+      const { data: sessionRes } = await supabase.auth.getSession();
+      const u = sessionRes?.session?.user;
+      void loadForSessionUser(detail.id, u?.email, {
+        full_name: detail.name,
+        avatar_url: detail.avatar,
+      });
+      notifyUser(`تم التبديل إلى حساب ${detail.name}`);
+    };
+
+    window.addEventListener('wasl:account-switched', handleAccountSwitched);
+
     return () => {
       active = false;
       sub.subscription.unsubscribe();
+      window.removeEventListener('wasl:account-switched', handleAccountSwitched);
     };
   }, []);
 
