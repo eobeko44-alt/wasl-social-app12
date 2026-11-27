@@ -12,10 +12,31 @@ import {
   Image as ImageIcon,
   Smile,
   ChevronDown,
+  BadgeCheck,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/store/useAppStore';
-import { VerifiedBlueBadge, isVerifiedFounderId } from '@/components/WaslHeaderBar';
+
+export const FOUNDER_USER_IDS = new Set<string>([
+  '9925c38d-c91d-47b6-9da2-f9042d4142d4',
+]);
+
+export function isVerifiedFounderId(userId?: string | null): boolean {
+  if (!userId || typeof userId !== 'string') return false;
+  return FOUNDER_USER_IDS.has(userId.trim());
+}
+
+export function VerifiedBlueBadge({ size = 15 }: { size?: number }) {
+  return (
+    <span
+      title="حساب موثّق رسمياً"
+      aria-label="حساب موثّق رسمياً"
+      className="inline-flex items-center justify-center shrink-0 text-[#1877F2]"
+    >
+      <BadgeCheck size={size} className="fill-[#1877F2] text-white" />
+    </span>
+  );
+}
 
 interface CommentReplyItem {
   id: string;
