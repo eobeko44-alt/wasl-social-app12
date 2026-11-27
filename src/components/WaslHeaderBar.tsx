@@ -21,10 +21,14 @@ import {
   Trash2,
   X,
   MoreHorizontal,
+  Bell,
+  Heart,
+  UserCheck,
+  Check,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
-export type WaslTabKey = 'feed' | 'chats' | 'contacts' | 'profile';
+export type WaslTabKey = 'feed' | 'chats' | 'contacts' | 'notifications' | 'profile';
 
 export interface StoryItem {
   id: string;
@@ -39,6 +43,19 @@ export interface FriendItem {
   id: string;
   name: string;
   avatar?: string;
+}
+
+export interface NotificationItem {
+  id: string;
+  user_id: string;
+  actor_name: string;
+  actor_avatar?: string | null;
+  type: 'like' | 'comment' | 'friend_request';
+  message: string;
+  preview_text?: string | null;
+  sender_id?: string | null;
+  is_read: boolean;
+  created_at: string;
 }
 
 interface SwitchableAccount {
@@ -129,7 +146,7 @@ const SWATCH_COLORS: Record<string, string> = {
   light: 'bg-white',
 };
 
-function isValidAvatarUrl(url?: string): boolean {
+function isValidAvatarUrl(url?: string | null): boolean {
   if (!url || typeof url !== 'string') return false;
   const trimmed = url.trim();
   if (!trimmed) return false;
@@ -138,6 +155,32 @@ function isValidAvatarUrl(url?: string): boolean {
     trimmed.startsWith('https://') ||
     trimmed.startsWith('data:image/') ||
     trimmed.startsWith('/')
+  );
+}
+
+function formatNotificationTime(isoDate: string): string {
+  const ts = new Date(isoDate).getTime();
+  if (Number.isNaN(ts)) return 'الآن';
+  const diffSec = Math.max(1, Math.floor((Date.now() - ts) / 1000));
+  if (diffSec < 60) return 'الآن';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} د`;
+  const diffHrs = Math.floor(diffMin / 60);
+  if (diffHrs < 24) return `${diffHrs} س`;
+  const diffDays = Math.floor(diffHrs / 24);
+  if (diffDays < 7) return `${diffDays} ي`;
+  const diffWeeks = Math.floor(diffDays / 7);
+  return `${diffWeeks} أ`;
+}
+
+function isTodayNotification(isoDate: string): boolean {
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return false;
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
   );
 }
 
@@ -313,6 +356,13 @@ export function WaslHeaderBar({
   const [searchingAccounts, setSearchingAccounts] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  // حالة الإشعارات
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [notifMenuId, setNotifMenuId] = useState<string | null>(null);
+  const [notifSearchOpen, setNotifSearchOpen] = useState(false);
+  const [notifFilterQuery, setNotifFilterQuery] = useState('');
+
   // شريط تحميل خفيف يظهر للحظات عند تغيّر التبويب
   const [tabPulse, setTabPulse] = useState(false);
   const isFirstRenderRef = useRef(true);
@@ -367,6 +417,116 @@ export function WaslHeaderBar({
       subscription.unsubscribe();
     };
   }, []);
+
+  // جلب الإشعارات والاشتراك الفوري (Realtime) من جدول notifications
+  useEffect(() => {
+    if (!currentUid) {
+      setNotifications([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingNotifications(true);
+
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('notifications')
+          .select('*')
+          .eq('user_id', currentUid)
+          .order('created_at', { ascending: false })
+          .limit(50);
+
+        if (!cancelled && !error && Array.isArray(data)) {
+          setNotifications(data as NotificationItem[]);
+        }
+      } finally {
+        if (!cancelled) setLoadingNotifications(false);
+      }
+    })();
+
+    const channel = supabase
+      .channel(`wasl-notifications-${currentUid}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${currentUid}`,
+        },
+        (payload) => {
+          if (cancelled) return;
+          if (payload.eventType === 'INSERT') {
+            const incoming = payload.new as NotificationItem;
+            setNotifications((prev) => [incoming, ...prev.filter((n) => n.id !== incoming.id)]);
+          } else if (payload.eventType === 'UPDATE') {
+            const updated = payload.new as NotificationItem;
+            setNotifications((prev) =>
+              prev.map((n) => (n.id === updated.id ? updated : n))
+            );
+          } else if (payload.eventType === 'DELETE') {
+            const deletedId = (payload.old as { id?: string })?.id;
+            if (deletedId) {
+              setNotifications((prev) => prev.filter((n) => n.id !== deletedId));
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      void supabase.removeChannel(channel);
+    };
+  }, [currentUid]);
+
+  // تعليم الإشعارات كمقروءة عند فتح تبويب الإشعارات
+  useEffect(() => {
+    if (activeTab !== 'notifications' || !currentUid) return;
+    const unreadIds = notifications.filter((n) => !n.is_read).map((n) => n.id);
+    if (unreadIds.length === 0) return;
+
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    void supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .in('id', unreadIds)
+      .eq('user_id', currentUid);
+  }, [activeTab, currentUid, notifications]);
+
+  const unreadNotificationsCount = notifications.filter((n) => !n.is_read).length;
+
+  const markNotificationAsRead = (id: string) => {
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
+    setNotifMenuId(null);
+    if (currentUid) {
+      void supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('id', id)
+        .eq('user_id', currentUid);
+    }
+  };
+
+  const deleteNotificationItem = (id: string) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+    setNotifMenuId(null);
+    if (currentUid) {
+      void supabase
+        .from('notifications')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', currentUid);
+    }
+  };
+
+  const handleFriendRequestAction = (item: NotificationItem, action: 'confirm' | 'delete') => {
+    deleteNotificationItem(item.id);
+    if (action === 'confirm') {
+      onSelectTab('contacts');
+    }
+  };
 
   useEffect(() => {
     const trimmed = searchQuery.trim();
@@ -674,17 +834,180 @@ export function WaslHeaderBar({
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
 
-  const tabs: { key: WaslTabKey; label: string; icon: string; badge?: number }[] = [
-    { key: 'feed', label: 'العام', icon: '🌐' },
+  // تبديل تبويب «حسابي» بتبويب «الإشعارات» مع عداد الإشعارات الجديدة
+  const tabs: {
+    key: WaslTabKey;
+    label: string;
+    icon: React.ReactNode;
+    badge?: number;
+  }[] = [
+    { key: 'feed', label: 'العام', icon: <span>🌐</span> },
     {
       key: 'chats',
       label: 'المحادثات',
-      icon: '💬',
+      icon: <span>💬</span>,
       badge: unreadChatsCount > 0 ? unreadChatsCount : undefined,
     },
-    { key: 'contacts', label: 'الأصدقاء', icon: '👥' },
-    { key: 'profile', label: 'حسابي', icon: '👤' },
+    { key: 'contacts', label: 'الأصدقاء', icon: <span>👥</span> },
+    {
+      key: 'notifications',
+      label: 'الإشعارات',
+      icon: <Bell size={18} className="text-current" />,
+      badge: unreadNotificationsCount > 0 ? unreadNotificationsCount : undefined,
+    },
   ];
+
+  const filteredNotifications = notifications.filter((n) => {
+    const q = notifFilterQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      (n.actor_name || '').toLowerCase().includes(q) ||
+      (n.message || '').toLowerCase().includes(q) ||
+      (n.preview_text || '').toLowerCase().includes(q)
+    );
+  });
+
+  const todayNotifications = filteredNotifications.filter((n) => isTodayNotification(n.created_at));
+  const olderNotifications = filteredNotifications.filter((n) => !isTodayNotification(n.created_at));
+
+  const renderNotificationBadgeIcon = (type: NotificationItem['type']) => {
+    if (type === 'like') {
+      return (
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-white ring-2 ring-[#0A0F1C]">
+          <Heart size={11} className="fill-white" />
+        </span>
+      );
+    }
+    if (type === 'comment') {
+      return (
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white ring-2 ring-[#0A0F1C]">
+          <MessageCircle size={11} className="fill-white" />
+        </span>
+      );
+    }
+    return (
+      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#1877F2] text-white ring-2 ring-[#0A0F1C]">
+        <UserCheck size={11} />
+      </span>
+    );
+  };
+
+  const renderNotificationCard = (item: NotificationItem) => {
+    const avatarSrc = isValidAvatarUrl(item.actor_avatar) ? item.actor_avatar!.trim() : undefined;
+    const isUnread = !item.is_read;
+
+    return (
+      <div
+        key={item.id}
+        className={`relative flex items-start justify-between gap-3 px-4 py-3 transition ${
+          isUnread ? 'bg-[#132038]/85' : 'bg-[#0A0F1C] hover:bg-slate-900/60'
+        }`}
+      >
+        <div
+          onClick={() => markNotificationAsRead(item.id)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') markNotificationAsRead(item.id);
+          }}
+          className="flex flex-1 items-start gap-3 min-w-0 cursor-pointer"
+        >
+          <div className="relative shrink-0">
+            {avatarSrc ? (
+              <img
+                src={avatarSrc}
+                alt={item.actor_name}
+                loading="lazy"
+                decoding="async"
+                className="h-12 w-12 rounded-full object-cover border border-white/15"
+              />
+            ) : (
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-cyan-600/35 to-purple-600/35 border border-white/15 text-base font-black text-cyan-200">
+                {(item.actor_name || 'و').slice(0, 1)}
+              </div>
+            )}
+            <span className="absolute -bottom-1 -left-1">
+              {renderNotificationBadgeIcon(item.type)}
+            </span>
+          </div>
+
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <p className="text-xs leading-relaxed text-slate-100">
+              <span className="font-extrabold text-white">{item.actor_name}</span>{' '}
+              <span className="text-slate-200">{item.message}</span>
+              {item.preview_text ? (
+                <span className="text-slate-300"> : &ldquo;{item.preview_text}&rdquo;</span>
+              ) : null}{' '}
+              <span
+                className={`text-[11px] font-bold ${
+                  isUnread ? 'text-[#4599FF]' : 'text-slate-400'
+                }`}
+              >
+                • {formatNotificationTime(item.created_at)}
+              </span>
+            </p>
+
+            {item.type === 'friend_request' && (
+              <div
+                className="flex items-center gap-2 pt-1"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={() => handleFriendRequestAction(item, 'confirm')}
+                  className="flex-1 rounded-lg bg-[#1877F2] py-1.5 text-xs font-extrabold text-white hover:bg-[#166FE5]"
+                >
+                  تأكيد
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFriendRequestAction(item, 'delete')}
+                  className="flex-1 rounded-lg bg-slate-800 border border-white/10 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700"
+                >
+                  حذف
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="relative flex items-center gap-1.5 shrink-0 pt-0.5">
+          {isUnread && (
+            <span className="h-2.5 w-2.5 rounded-full bg-[#1877F2]" aria-label="غير مقروء" />
+          )}
+          <button
+            type="button"
+            onClick={() => setNotifMenuId((prev) => (prev === item.id ? null : item.id))}
+            aria-label="خيارات الإشعار"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-white/10 hover:text-white"
+          >
+            <MoreHorizontal size={16} />
+          </button>
+
+          {notifMenuId === item.id && (
+            <div className="absolute left-0 top-8 z-30 w-40 rounded-xl border border-white/15 bg-slate-900 py-1 shadow-xl">
+              <button
+                type="button"
+                onClick={() => markNotificationAsRead(item.id)}
+                className="flex w-full items-center gap-2 px-3 py-2 text-right text-xs font-bold text-slate-200 hover:bg-white/5"
+              >
+                <Check size={14} className="text-cyan-400" />
+                <span>تعليم كمقروء</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteNotificationItem(item.id)}
+                className="flex w-full items-center gap-2 px-3 py-2 text-right text-xs font-bold text-rose-300 hover:bg-white/5"
+              >
+                <Trash2 size={14} className="text-rose-400" />
+                <span>حذف الإشعار</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   const openStoryGallery = () => {
     if (storyFileInputRef.current) {
@@ -922,7 +1245,7 @@ export function WaslHeaderBar({
     !qSettings || label.toLowerCase().includes(qSettings);
 
   return (
-    <div dir="rtl" className="w-full bg-slate-950 text-slate-100 select-none">
+    <div dir="rtl" className="w-full bg-[#0A0F1C] text-slate-100 select-none">
       <input
         ref={storyFileInputRef}
         type="file"
@@ -987,7 +1310,7 @@ export function WaslHeaderBar({
 
       {/* شريط البحث العام عن أي حساب مسجل في وِصل بالاسم */}
       {searchOpen && (
-        <div className="px-4 pb-2.5 space-y-2 border-b border-slate-800 bg-slate-950">
+        <div className="px-4 pb-2.5 space-y-2 border-b border-slate-800 bg-[#0A0F1C]">
           <div className="flex items-center gap-2 rounded-xl bg-slate-900 border border-slate-800 px-3 py-2">
             <Search size={14} className="text-cyan-400 shrink-0" />
             <input
@@ -1066,7 +1389,7 @@ export function WaslHeaderBar({
       {/* 2. شريط التبويبات العلوي */}
       <nav
         aria-label="أقسام التطبيق"
-        className="relative grid grid-cols-4 bg-slate-950 border-b border-slate-800"
+        className="relative grid grid-cols-4 bg-[#0A0F1C] border-b border-slate-800"
       >
         {tabPulse && (
           <div className="pointer-events-none absolute top-0 inset-x-0 h-[2px] bg-[#1877F2]" />
@@ -1086,9 +1409,9 @@ export function WaslHeaderBar({
               }`}
             >
               <div className="relative flex items-center justify-center text-lg leading-none">
-                <span>{tab.icon}</span>
+                {tab.icon}
                 {typeof tab.badge === 'number' && tab.badge > 0 && (
-                  <span className="absolute -top-1.5 -left-2.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-cyan-500 px-1 text-[10px] font-black text-slate-950">
+                  <span className="absolute -top-1.5 -left-2.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-black text-white">
                     {tab.badge}
                   </span>
                 )}
@@ -1101,6 +1424,88 @@ export function WaslHeaderBar({
           );
         })}
       </nav>
+
+      {/* قسم الإشعارات عند اختيار تبويب «الإشعارات» */}
+      {activeTab === 'notifications' && (
+        <section aria-label="الإشعارات" className="bg-[#0A0F1C] border-b border-slate-800">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onSelectTab('feed')}
+                aria-label="رجوع إلى العام"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-slate-300 hover:bg-white/10"
+              >
+                <ChevronRight size={20} />
+              </button>
+              <h2 className="text-lg font-extrabold text-white">الإشعارات</h2>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setNotifSearchOpen((prev) => !prev);
+                setNotifFilterQuery('');
+              }}
+              aria-label="بحث في الإشعارات"
+              className={`flex h-9 w-9 items-center justify-center rounded-full ${
+                notifSearchOpen ? 'bg-cyan-500/20 text-cyan-300' : 'bg-white/5 text-slate-200'
+              }`}
+            >
+              <Search size={17} />
+            </button>
+          </div>
+
+          {notifSearchOpen && (
+            <div className="px-4 py-2.5 border-b border-white/10 bg-slate-950/60">
+              <input
+                type="text"
+                value={notifFilterQuery}
+                onChange={(e) => setNotifFilterQuery(e.target.value)}
+                placeholder="ابحث في الإشعارات..."
+                className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none"
+              />
+            </div>
+          )}
+
+          {loadingNotifications ? (
+            <div className="px-4 py-8 text-center text-xs text-slate-400">
+              جاري تحميل الإشعارات...
+            </div>
+          ) : filteredNotifications.length === 0 ? (
+            <div className="px-4 py-10 text-center space-y-1.5">
+              <p className="text-sm font-bold text-slate-200">لا توجد إشعارات حالياً</p>
+              <p className="text-xs text-slate-400">
+                ستظهر هنا التفاعلات، التعليقات، وطلبات الصداقة فور وصولها.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-white/5">
+              {todayNotifications.length > 0 && (
+                <div>
+                  <div className="px-4 py-2 text-xs font-extrabold text-slate-300 bg-slate-950/40">
+                    اليوم
+                  </div>
+                  <div className="divide-y divide-white/5">
+                    {todayNotifications.map(renderNotificationCard)}
+                  </div>
+                </div>
+              )}
+
+              {olderNotifications.length > 0 && (
+                <div>
+                  <div className="px-4 py-2 text-xs font-extrabold text-slate-300 bg-slate-950/40">
+                    الأقدم
+                  </div>
+                  <div className="divide-y divide-white/5">
+                    {olderNotifications.map(renderNotificationCard)}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* 3. شريط «بم تفكر؟» + شريط القصص */}
       {activeTab === 'feed' && (
