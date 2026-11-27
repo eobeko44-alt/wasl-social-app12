@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import ChatList from './ChatList';
 import ChatWindow from './ChatWindow';
@@ -15,13 +15,20 @@ export default function ChatsTab() {
   };
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-8rem)] max-w-6xl overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50 md:h-[calc(100vh-7rem)]">
+    <div className="mx-auto flex h-[calc(100vh-8rem)] max-w-6xl overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/70">
       <div
-        className={`w-full md:w-auto md:block ${mobileView === 'list' ? 'block' : 'hidden'}`}
+        className={`w-full md:w-auto md:block ${
+          mobileView === 'list' ? 'block' : 'hidden'
+        }`}
       >
-        <ChatList className="md:border-e" onOpen={() => setMobileView('chat')} />
+        <ChatList className="md:border-e" onOpen={handleOpen} />
       </div>
-      <div className={`flex-1 md:flex ${mobileView === 'chat' ? 'flex' : 'hidden'}`}>
+
+      <div
+        className={`flex-1 md:flex ${
+          mobileView === 'chat' ? 'flex' : 'hidden'
+        }`}
+      >
         <ChatWindow onBack={handleBack} />
       </div>
     </div>
