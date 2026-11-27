@@ -177,9 +177,28 @@ export default function App() {
   const profile = store.profile || {};
   const createPost = store.createPost;
   const addPost = store.addPost;
+  const openConversation = store.openConversation;
 
   const handleSelectTab = (nextTab: Tab) => {
     setTab(nextTab);
+  };
+
+  const handleOpenChatForUser = (userId: string, userName?: string, avatar?: string) => {
+    if (!userId) {
+      setTab('chats');
+      return;
+    }
+    openConversation(userId, { userName, avatar });
+    setTab('chats');
+    try {
+      window.dispatchEvent(
+        new CustomEvent('wasl-open-chat', {
+          detail: { userId, userName, avatar },
+        })
+      );
+    } catch {
+      // تجاهل
+    }
   };
 
   const displayName =
@@ -528,7 +547,9 @@ export default function App() {
         currentUserName={displayName}
         userAvatar={effectiveAvatar}
         onLogout={() => void handleLogoutEverywhere()}
-        onSelectFriend={(_friend: FriendItem) => handleSelectTab('chats')}
+        onSelectFriend={(friend: FriendItem) =>
+          handleOpenChatForUser(friend.id, friend.name, friend.avatar)
+        }
       />
 
       <main className="mx-auto w-full max-w-2xl flex-1 px-3 py-4">
@@ -536,7 +557,11 @@ export default function App() {
           {tab === 'feed' && <FeedTab />}
           {tab === 'chats' && <ChatsTab />}
           {tab === 'contacts' && (
-            <FriendsTab onOpenChatWithUser={() => handleSelectTab('chats')} />
+            <FriendsTab
+              onOpenChatWithUser={(userId, userName) =>
+                handleOpenChatForUser(userId, userName)
+              }
+            />
           )}
           {tab === 'profile' && <ProfileTab />}
         </TabErrorBoundary>
