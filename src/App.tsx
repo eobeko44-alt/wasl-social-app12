@@ -16,7 +16,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import AuthGate from '@/components/AuthGate';
 import { WaslHeaderBar, WaslTabKey, FriendItem } from '@/components/WaslHeaderBar';
-import { useAppStore } from '@/store/useAppStore';
+import { activateUser, deactivateUser, useAppStore } from '@/store/useAppStore';
 import FeedTab from '@/components/feed/FeedTab';
 import ChatsTab from '@/components/chats/ChatsTab';
 import ContactsTab from '@/components/contacts/ContactsTab';
@@ -92,23 +92,12 @@ function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 function clearStoreForAccountSwitch() {
-  const storeState = useAppStore.getState() as Record<string, any>;
-  if (typeof storeState.resetForAccountSwitch === 'function') {
-    storeState.resetForAccountSwitch();
-  } else if (typeof storeState.updateProfile === 'function') {
-    storeState.updateProfile({
-      name: '',
-      username: '',
-      phone: '',
-      avatar: '',
-    });
-  }
+  deactivateUser();
 }
 
 async function applySessionToProfile(s: Session | null) {
-  const storeState = useAppStore.getState() as Record<string, any>;
   if (!s?.user) {
-    clearStoreForAccountSwitch();
+    deactivateUser();
     return;
   }
 
@@ -145,25 +134,17 @@ async function applySessionToProfile(s: Session | null) {
     // تجاهل خطأ الجلب
   }
 
-  if (typeof storeState.updateProfile === 'function') {
-    const patch: Record<string, string> = {};
-    if (fullName) {
-      patch.name = fullName;
-      const cleanHandle = fullName.toLowerCase().replace(/[^a-z0-9_]/g, '');
-      if (cleanHandle) {
-        patch.username = `@${cleanHandle}`;
-      }
-    }
-    if (avatarUrl) {
-      patch.avatar = avatarUrl;
-    }
-    if (phoneNum) {
-      patch.phone = phoneNum;
-    }
-    if (Object.keys(patch).length > 0) {
-      storeState.updateProfile(patch);
-    }
+  if (!fullName && s.user.email) {
+    fullName = s.user.email.split('@')[0];
   }
+
+  const cleanHandle = fullName ? fullName.toLowerCase().replace(/[^a-z0-9_]/g, '') : '';
+  activateUser(uid, {
+    ...(fullName ? { name: fullName } : {}),
+    ...(cleanHandle ? { username: `@${cleanHandle}` } : {}),
+    ...(avatarUrl ? { avatar: avatarUrl } : {}),
+    ...(phoneNum ? { phone: phoneNum } : {}),
+  });
 }
 
 export default function App() {
@@ -176,10 +157,10 @@ export default function App() {
 
   const activeUidRef = useRef<string | null>(null);
 
-  const store = useAppStore() as Record<string, any>;
+  const store = useAppStore();
   const profile = store.profile || {};
-  const createPost = typeof store.createPost === 'function' ? store.createPost : null;
-  const addPost = typeof store.addPost === 'function' ? store.addPost : null;
+  const createPost = store.createPost;
+  const addPost = store.addPost;
 
   const displayName =
     activeUserName ||
@@ -212,14 +193,14 @@ export default function App() {
       setSession(null);
       setActiveUserName('');
       setActiveUserAvatar('');
-      clearStoreForAccountSwitch();
+      deactivateUser();
       return;
     }
 
     if (activeUidRef.current && activeUidRef.current !== nextUid) {
       setActiveUserName('');
       setActiveUserAvatar('');
-      clearStoreForAccountSwitch();
+      deactivateUser();
     }
 
     activeUidRef.current = nextUid;
@@ -290,7 +271,7 @@ export default function App() {
   const handleLogoutEverywhere = async () => {
     await syncSessionState(null);
     try {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
     } catch {
       // تجاهل
     }
