@@ -158,6 +158,7 @@ interface FeedPostItem {
   imageUrl?: string;
   createdAt: string;
   likesCount: number;
+  sharesCount: number;
   likedByMe: boolean;
   comments: PostCommentItem[];
   interestState?: 'interested' | 'not_interested' | null;
@@ -298,6 +299,7 @@ function normalizeRow(row: any, currentUid: string | null): FeedPostItem {
         : undefined,
     createdAt: formatRelativeTime(row?.created_at),
     likesCount: typeof row?.likes_count === 'number' ? row.likes_count : 0,
+    sharesCount: typeof row?.shares_count === 'number' ? row.shares_count : 0,
     likedByMe: Boolean(currentUid && Array.isArray(row?.liked_by) && row.liked_by.includes(currentUid)),
     comments: sanitizeComments(row?.comments),
     interestState: null,
@@ -380,7 +382,9 @@ export default function FeedTab({ onOpenUserProfile }: FeedTabProps = {}) {
 
       const { data, error } = await supabase
         .from('posts')
-        .select('id, user_id, author_name, author_handle, headline, content, image_url, created_at')
+        .select(
+          'id, user_id, author_name, author_handle, headline, content, image_url, created_at, likes_count, shares_count'
+        )
         .order('created_at', { ascending: false })
         .limit(20);
 
@@ -431,6 +435,7 @@ export default function FeedTab({ onOpenUserProfile }: FeedTabProps = {}) {
           undefined,
         createdAt: typeof p?.createdAt === 'string' && p.createdAt ? p.createdAt : 'الآن',
         likesCount: typeof p?.likesCount === 'number' ? p.likesCount : 0,
+        sharesCount: typeof p?.sharesCount === 'number' ? p.sharesCount : 0,
         likedByMe: Boolean(p?.likedByMe),
         comments: sanitizeComments(p?.comments),
         interestState: null,
@@ -594,14 +599,21 @@ export default function FeedTab({ onOpenUserProfile }: FeedTabProps = {}) {
 
   const handleToggleLike = (item: FeedPostItem) => {
     const willLike = !item.likedByMe;
+    const nextCount = Math.max(0, item.likesCount + (willLike ? 1 : -1));
+
     updateBothLists((list) =>
       list.map((p) => {
         if (p.id !== item.id) return p;
-        const nextLiked = !p.likedByMe;
-        const nextCount = Math.max(0, p.likesCount + (nextLiked ? 1 : -1));
-        return { ...p, likedByMe: nextLiked, likesCount: nextCount };
+        return { ...p, likedByMe: willLike, likesCount: nextCount };
       })
     );
+
+    if (item.dbId) {
+      void supabase
+        .from('posts')
+        .update({ likes_count: nextCount })
+        .eq('id', item.dbId);
+    }
 
     if (willLike) {
       void sendPostNotification(item, 'like');
@@ -728,6 +740,17 @@ export default function FeedTab({ onOpenUserProfile }: FeedTabProps = {}) {
   };
 
   const handleSharePost = async (item: FeedPostItem) => {
+    const nextShares = (item.sharesCount || 0) + 1;
+    updateBothLists((list) =>
+      list.map((p) => (p.id === item.id ? { ...p, sharesCount: nextShares } : p))
+    );
+    if (item.dbId) {
+      void supabase
+        .from('posts')
+        .update({ shares_count: nextShares })
+        .eq('id', item.dbId);
+    }
+
     const shareText = item.content || item.headline || 'منشور من وِصل';
     try {
       if (navigator.share) {
@@ -899,9 +922,14 @@ export default function FeedTab({ onOpenUserProfile }: FeedTabProps = {}) {
 
               <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 text-[11px] text-slate-400">
                 <span>{item.likesCount > 0 ? `${item.likesCount} إعجاب` : ''}</span>
-                <span>
-                  {totalCommentsAndReplies > 0 ? `${totalCommentsAndReplies} تعليق` : ''}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span>
+                    {totalCommentsAndReplies > 0 ? `${totalCommentsAndReplies} تعليق` : ''}
+                  </span>
+                  <span>
+                    {item.sharesCount > 0 ? `${item.sharesCount} مشاركة` : ''}
+                  </span>
+                </div>
               </div>
 
               <div className="grid grid-cols-3 gap-1 border-t border-slate-800/80 pt-1.5">
@@ -1399,6 +1427,11 @@ export default function FeedTab({ onOpenUserProfile }: FeedTabProps = {}) {
                   <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-300">
                     <MessageCircle size={14} />
                     <span>{activePost.comments.length}</span>
+                  </span>
+
+                  <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-300">
+                    <Share2 size={14} />
+                    <span>{activePost.sharesCount}</span>
                   </span>
 
                   <button
