@@ -435,6 +435,11 @@ export default function ProfileTab() {
   const [draftFollowing, setDraftFollowing] = useState<string>(String(DEFAULT_FOLLOWING));
   const [newFollowerName, setNewFollowerName] = useState<string>('');
 
+  const [statsModalPostId, setStatsModalPostId] = useState<string | null>(null);
+  const [draftLikes, setDraftLikes] = useState<string>('0');
+  const [draftCommentsCount, setDraftCommentsCount] = useState<string>('0');
+  const [draftShares, setDraftShares] = useState<string>('0');
+
   const [editingDetails, setEditingDetails] = useState(false);
   const [bio, setBio] = useState<string>(DEFAULT_BIO);
   const [city, setCity] = useState<string>(DEFAULT_CITY);
@@ -502,6 +507,7 @@ export default function ProfileTab() {
     setOpenCommentsPostId(null);
     setShowFollowModal(false);
     setIsEditingFollowCounts(false);
+    setStatsModalPostId(null);
     setMenuPostId(null);
   };
 
@@ -896,6 +902,7 @@ export default function ProfileTab() {
 
   const handleSaveFollowCounts = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isFounderAccount) return;
     const nextFollowers = Math.max(0, Number.parseInt(draftFollowers, 10) || 0);
     const nextFollowing = Math.max(0, Number.parseInt(draftFollowing, 10) || 0);
     setFollowersCount(nextFollowers);
@@ -912,6 +919,7 @@ export default function ProfileTab() {
 
   const handleAddPersonToList = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isFounderAccount) return;
     const cleanName = newFollowerName.trim();
     if (!cleanName) return;
 
@@ -931,6 +939,56 @@ export default function ProfileTab() {
       setDraftFollowing((prev) => String((Number.parseInt(prev, 10) || 0) + 1));
     }
     setNewFollowerName('');
+  };
+
+  const openFounderStatsModal = (post: ActivityPostItem) => {
+    if (!isFounderAccount) return;
+    setStatsModalPostId(post.id);
+    setDraftLikes(String(post.likesCount || 0));
+    setDraftCommentsCount(String(post.comments?.length || 0));
+    setDraftShares(String(post.sharesCount || 0));
+    setMenuPostId(null);
+  };
+
+  const handleSavePostStats = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isFounderAccount || !statsModalPostId) return;
+
+    const nextLikes = Math.max(0, Number.parseInt(draftLikes, 10) || 0);
+    const nextCommentsTotal = Math.max(0, Number.parseInt(draftCommentsCount, 10) || 0);
+    const nextShares = Math.max(0, Number.parseInt(draftShares, 10) || 0);
+
+    setActivityPosts((prev) =>
+      prev.map((p) => {
+        if (p.id !== statsModalPostId) return p;
+
+        const currentComments = [...(p.comments || [])];
+        let updatedComments = currentComments;
+
+        if (nextCommentsTotal > currentComments.length) {
+          const needed = nextCommentsTotal - currentComments.length;
+          const fillers: PostCommentItem[] = Array.from({ length: needed }, (_, idx) => ({
+            id: `founder-cmt-${Date.now()}-${idx}`,
+            author: 'متابع على وِصل',
+            text: 'تعليق مميز',
+            createdAt: 'الآن',
+          }));
+          updatedComments = [...currentComments, ...fillers];
+        } else if (nextCommentsTotal < currentComments.length) {
+          updatedComments = currentComments.slice(0, nextCommentsTotal);
+        }
+
+        return {
+          ...p,
+          likesCount: nextLikes,
+          comments: updatedComments,
+          sharesCount: nextShares,
+        };
+      })
+    );
+
+    setStatsModalPostId(null);
+    notifyUser('تم تحديث أعداد التفاعلات والتعليقات والمشاركات');
   };
 
   const displayedFollowPeople =
@@ -1501,13 +1559,15 @@ export default function ProfileTab() {
               </div>
 
               <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setIsEditingFollowCounts((prev) => !prev)}
-                  className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1 text-[11px] font-bold text-cyan-300 hover:border-cyan-500/40"
-                >
-                  {isEditingFollowCounts ? 'إخفاء الضبط' : 'ضبط الرقم'}
-                </button>
+                {isFounderAccount && (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingFollowCounts((prev) => !prev)}
+                    className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1 text-[11px] font-bold text-cyan-300 hover:border-cyan-500/40"
+                  >
+                    {isEditingFollowCounts ? 'إخفاء الضبط' : 'ضبط الرقم'}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowFollowModal(false)}
@@ -1519,7 +1579,7 @@ export default function ProfileTab() {
               </div>
             </div>
 
-            {isEditingFollowCounts && (
+            {isFounderAccount && isEditingFollowCounts && (
               <form
                 onSubmit={handleSaveFollowCounts}
                 className="border-b border-slate-800 bg-slate-950/70 p-3.5 space-y-2.5"
@@ -1555,28 +1615,30 @@ export default function ProfileTab() {
               </form>
             )}
 
-            <form
-              onSubmit={handleAddPersonToList}
-              className="flex items-center gap-2 border-b border-slate-800/80 p-3"
-            >
-              <input
-                type="text"
-                value={newFollowerName}
-                onChange={(e) => setNewFollowerName(e.target.value)}
-                placeholder={
-                  followModalTab === 'followers'
-                    ? 'إضافة اسم متابع للقائمة...'
-                    : 'إضافة اسم حساب تتابعه...'
-                }
-                className="flex-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
-              />
-              <button
-                type="submit"
-                className="rounded-xl bg-cyan-600 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-500 transition"
+            {isFounderAccount && (
+              <form
+                onSubmit={handleAddPersonToList}
+                className="flex items-center gap-2 border-b border-slate-800/80 p-3"
               >
-                إضافة
-              </button>
-            </form>
+                <input
+                  type="text"
+                  value={newFollowerName}
+                  onChange={(e) => setNewFollowerName(e.target.value)}
+                  placeholder={
+                    followModalTab === 'followers'
+                      ? 'إضافة اسم متابع للقائمة...'
+                      : 'إضافة اسم حساب تتابعه...'
+                  }
+                  className="flex-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500/40 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  className="rounded-xl bg-cyan-600 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-500 transition"
+                >
+                  إضافة
+                </button>
+              </form>
+            )}
 
             <div className="flex-1 overflow-y-auto divide-y divide-slate-800/70 p-2">
               {displayedFollowPeople.length === 0 ? (
@@ -1611,6 +1673,82 @@ export default function ProfileTab() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {isFounderAccount && statsModalPostId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          onClick={() => setStatsModalPostId(null)}
+        >
+          <form
+            onSubmit={handleSavePostStats}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl border border-cyan-500/30 bg-slate-900 p-4 space-y-3 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-white">تعديل أعداد المنشور</h3>
+              <button
+                type="button"
+                onClick={() => setStatsModalPostId(null)}
+                aria-label="إغلاق"
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[11px] text-slate-400">
+                عدد الإعجابات (أحببته)
+              </label>
+              <input
+                type="number"
+                min={0}
+                value={draftLikes}
+                onChange={(e) => setDraftLikes(e.target.value)}
+                className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white focus:border-cyan-500/40 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[11px] text-slate-400">عدد التعليقات</label>
+              <input
+                type="number"
+                min={0}
+                value={draftCommentsCount}
+                onChange={(e) => setDraftCommentsCount(e.target.value)}
+                className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white focus:border-cyan-500/40 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[11px] text-slate-400">عدد المشاركات</label>
+              <input
+                type="number"
+                min={0}
+                value={draftShares}
+                onChange={(e) => setDraftShares(e.target.value)}
+                className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white focus:border-cyan-500/40 focus:outline-none"
+              />
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setStatsModalPostId(null)}
+                className="flex-1 rounded-xl border border-slate-800 bg-slate-950 py-2 text-xs font-bold text-slate-300"
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                className="flex-1 rounded-xl bg-gradient-to-l from-cyan-600 to-purple-600 py-2 text-xs font-bold text-white"
+              >
+                حفظ الأرقام
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
@@ -2302,13 +2440,28 @@ export default function ProfileTab() {
                     />
                   )}
 
-                  <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 text-[11px] text-slate-400">
-                    <span>{post.likesCount || 0} أحببته</span>
-                    <div className="flex items-center gap-3">
-                      <span>{comments.length} تعليق</span>
-                      <span>{post.sharesCount || 0} مشاركة</span>
+                  {isFounderAccount ? (
+                    <button
+                      type="button"
+                      onClick={() => openFounderStatsModal(post)}
+                      title="تعديل أعداد التفاعلات والتعليقات والمشاركات"
+                      className="flex w-full items-center justify-between border-t border-slate-800/80 pt-2 text-[11px] text-slate-400 hover:text-cyan-300 transition"
+                    >
+                      <span>{formatCompactCount(post.likesCount || 0)} أحببته</span>
+                      <div className="flex items-center gap-3">
+                        <span>{formatCompactCount(comments.length)} تعليق</span>
+                        <span>{formatCompactCount(post.sharesCount || 0)} مشاركة</span>
+                      </div>
+                    </button>
+                  ) : (
+                    <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 text-[11px] text-slate-400">
+                      <span>{formatCompactCount(post.likesCount || 0)} أحببته</span>
+                      <div className="flex items-center gap-3">
+                        <span>{formatCompactCount(comments.length)} تعليق</span>
+                        <span>{formatCompactCount(post.sharesCount || 0)} مشاركة</span>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <div className="grid grid-cols-3 gap-1.5 border-t border-slate-800/80 pt-2">
                     <button
