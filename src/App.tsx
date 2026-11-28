@@ -25,7 +25,14 @@ import ProfileTab from '@/components/profile/ProfileTab';
 
 type Tab = 'feed' | 'chats' | 'contacts' | 'notifications' | 'profile';
 
+interface SwitchedAccountDetail {
+  id: string;
+  name: string;
+  avatar?: string;
+}
+
 const MEDIA_BUCKET = 'wasl-media';
+const ACTIVE_SWITCHED_ACCOUNT_KEY = 'wasl_active_switched_account_v1';
 
 class TabErrorBoundary extends Component<
   { children: ReactNode; onReset?: () => void },
@@ -133,6 +140,22 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+function readSwitchedAccountFromStorage(): SwitchedAccountDetail | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_SWITCHED_ACCOUNT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.id || !parsed?.name) return null;
+    return {
+      id: String(parsed.id),
+      name: String(parsed.name).trim(),
+      avatar: typeof parsed.avatar === 'string' && parsed.avatar.trim() ? parsed.avatar.trim() : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function getFallbackIdentity(s: Session) {
   const meta = s.user.user_metadata || {};
   const rawName =
@@ -234,15 +257,18 @@ export default function App() {
 
       if (activeUidRef.current !== uid) return;
 
+      const switched = readSwitchedAccountFromStorage();
       const resolvedName =
-        prof?.full_name && typeof prof.full_name === 'string' && prof.full_name.trim()
+        (switched?.id === uid && switched?.name) ||
+        (prof?.full_name && typeof prof.full_name === 'string' && prof.full_name.trim()
           ? prof.full_name.trim()
-          : baseName;
+          : baseName);
 
       const resolvedAvatar =
-        prof?.avatar_url && typeof prof.avatar_url === 'string' && prof.avatar_url.trim()
+        (switched?.id === uid && switched?.avatar) ||
+        (prof?.avatar_url && typeof prof.avatar_url === 'string' && prof.avatar_url.trim()
           ? prof.avatar_url.trim()
-          : baseAvatar || '';
+          : baseAvatar || '');
 
       setActiveUserName(resolvedName);
       setActiveUserAvatar(resolvedAvatar);
@@ -259,9 +285,10 @@ export default function App() {
   };
 
   const applySessionFast = (nextSession: Session | null) => {
-    const nextUid = nextSession?.user?.id ?? null;
+    const switched = readSwitchedAccountFromStorage();
+    const nextUid = switched?.id || nextSession?.user?.id || null;
 
-    if (!nextSession || !nextUid) {
+    if (!nextSession && !switched) {
       activeUidRef.current = null;
       setSession(null);
       setActiveUserName('');
@@ -270,24 +297,40 @@ export default function App() {
       return;
     }
 
-    const identity = getFallbackIdentity(nextSession);
+    if (nextSession) {
+      setSession(nextSession);
+    }
+
+    if (!nextUid) {
+      activeUidRef.current = null;
+      setActiveUserName('');
+      setActiveUserAvatar('');
+      deactivateUser();
+      return;
+    }
+
+    const baseIdentity = nextSession ? getFallbackIdentity(nextSession) : null;
+    const resolvedName =
+      (switched?.id === nextUid && switched?.name) || baseIdentity?.name || 'حساب وِصل';
+    const resolvedAvatar =
+      (switched?.id === nextUid && switched?.avatar) || baseIdentity?.avatar || '';
+    const cleanHandle = resolvedName.toLowerCase().replace(/[^a-z0-9_]/g, '');
+
     const isNewUser = activeUidRef.current !== nextUid;
-
     activeUidRef.current = nextUid;
-    setSession(nextSession);
 
-    if (isNewUser) {
-      setActiveUserName(identity.name);
-      setActiveUserAvatar(identity.avatar || '');
+    if (isNewUser || switched) {
+      setActiveUserName(resolvedName);
+      setActiveUserAvatar(resolvedAvatar);
       activateUser(nextUid, {
-        name: identity.name,
-        username: identity.username,
-        ...(identity.avatar ? { avatar: identity.avatar } : {}),
-        ...(identity.phone ? { phone: identity.phone } : {}),
+        name: resolvedName,
+        username: cleanHandle ? `@${cleanHandle}` : '@user',
+        ...(resolvedAvatar ? { avatar: resolvedAvatar } : {}),
+        ...(baseIdentity?.phone ? { phone: baseIdentity.phone } : {}),
       });
     }
 
-    void hydrateProfileInBackground(nextUid, identity.name, identity.avatar);
+    void hydrateProfileInBackground(nextUid, resolvedName, resolvedAvatar);
   };
 
   useEffect(() => {
@@ -305,14 +348,43 @@ export default function App() {
       setChecking(false);
     });
 
+    const onSwitchedEvent = (event: Event) => {
+      const custom = event as CustomEvent<SwitchedAccountDetail>;
+      const detail = custom?.detail || readSwitchedAccountFromStorage();
+      if (!detail?.id || !detail?.name) return;
+
+      activeUidRef.current = detail.id;
+      setActiveUserName(detail.name);
+      setActiveUserAvatar(detail.avatar || '');
+
+      const cleanHandle = detail.name.toLowerCase().replace(/[^a-z0-9_]/g, '');
+      activateUser(detail.id, {
+        name: detail.name,
+        username: cleanHandle ? `@${cleanHandle}` : '@user',
+        ...(detail.avatar ? { avatar: detail.avatar } : {}),
+      });
+    };
+
+    window.addEventListener('wasl:account-switched', onSwitchedEvent);
+
     return () => {
       active = false;
       sub.subscription.unsubscribe();
+      window.removeEventListener('wasl:account-switched', onSwitchedEvent);
     };
   }, []);
 
   const handleLogoutEverywhere = async () => {
-    applySessionFast(null);
+    try {
+      localStorage.removeItem(ACTIVE_SWITCHED_ACCOUNT_KEY);
+    } catch {
+      // تجاهل
+    }
+    activeUidRef.current = null;
+    setSession(null);
+    setActiveUserName('');
+    setActiveUserAvatar('');
+    deactivateUser();
     handleSelectTab('feed');
     try {
       await supabase.auth.signOut({ scope: 'local' });
@@ -440,7 +512,7 @@ export default function App() {
     );
   }
 
-  if (!session) {
+  if (!session && !readSwitchedAccountFromStorage()) {
     return <AuthGate />;
   }
 
