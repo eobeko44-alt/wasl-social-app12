@@ -694,8 +694,8 @@ export default function ProfileTab() {
                 : 'الآن',
               kind: kindVal,
               liked: false,
-              likesCount: 0,
-              sharesCount: 0,
+              likesCount: typeof row.likes_count === 'number' ? row.likes_count : 0,
+              sharesCount: typeof row.shares_count === 'number' ? row.shares_count : 0,
               comments: [],
               privacy: 'public',
               commentAudience: 'everyone',
@@ -885,6 +885,25 @@ export default function ProfileTab() {
     }
   }
 
+  async function syncPostStatsToSupabase(
+    post: ActivityPostItem,
+    nextLikes: number,
+    nextShares: number
+  ): Promise<void> {
+    if (!post.dbId) return;
+    try {
+      await supabase
+        .from('posts')
+        .update({
+          likes_count: nextLikes,
+          shares_count: nextShares,
+        })
+        .eq('id', post.dbId);
+    } catch {
+      // تجاهل إذا لم تتوفر الأعمدة في قاعدة البيانات
+    }
+  }
+
   const photoPosts = activityPosts.filter((p) => Boolean(p.image));
   const interestsList = interestsText
     .split(/[,،\n]+/)
@@ -957,6 +976,7 @@ export default function ProfileTab() {
     const nextLikes = Math.max(0, Number.parseInt(draftLikes, 10) || 0);
     const nextCommentsTotal = Math.max(0, Number.parseInt(draftCommentsCount, 10) || 0);
     const nextShares = Math.max(0, Number.parseInt(draftShares, 10) || 0);
+    const targetPost = activityPosts.find((p) => p.id === statsModalPostId);
 
     setActivityPosts((prev) =>
       prev.map((p) => {
@@ -986,6 +1006,10 @@ export default function ProfileTab() {
         };
       })
     );
+
+    if (targetPost) {
+      void syncPostStatsToSupabase(targetPost, nextLikes, nextShares);
+    }
 
     setStatsModalPostId(null);
     notifyUser('تم تحديث أعداد التفاعلات والتعليقات والمشاركات');
@@ -1035,6 +1059,8 @@ export default function ProfileTab() {
         content: fullItem.content ? `${fullItem.headline} — ${fullItem.content}` : fullItem.headline,
         image: fullItem.image,
         createdAt: fullItem.createdAt,
+        likesCount: fullItem.likesCount,
+        sharesCount: fullItem.sharesCount,
       });
     }
   };
